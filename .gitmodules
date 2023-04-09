@@ -1,0 +1,8 @@
+[submodule "external/ldrawloader"]
+	path = external/ldrawloader
+	url = https://github.com/pixeljetstream/ldrawloader.git
+	branch = master
+[submodule "external/nvpro_core"]
+	path = external/nvpro_core
+	url = https://github.com/nvpro-samples/nvpro_core.git
+	branch = master
