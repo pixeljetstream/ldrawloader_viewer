@@ -172,6 +172,11 @@ namespace ldrawviewer
       m_parameterList.addFilename(".ldr", &m_modelFilename);
       m_parameterList.addFilename(".mpd", &m_modelFilename);
       m_parameterList.add("ldrawpath", &m_ldrawPath);
+
+      const char* ldrawPath = getenv("LDRAWDIR");
+      if (ldrawPath){
+        m_ldrawPath  = std::string(ldrawPath);
+      }
     }
 
   };
@@ -354,7 +359,7 @@ namespace ldrawviewer
 
     ImGui::NewFrame();
     ImGui::SetNextWindowSize(ImVec2(350, 0), ImGuiCond_FirstUseEver);
-    if (ImGui::Begin("NVIDIA " PROJECT_NAME, nullptr)) {
+    if (ImGui::Begin(PROJECT_NAME, nullptr)) {
       ImGui::Checkbox("colors", &m_tweak.colors);
       ImGui::Checkbox("bf cull", &m_tweak.cull);
       ImGui::SliderFloat("transparency", &m_tweak.transparency, 0, 1);
