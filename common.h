@@ -1,5 +1,5 @@
 /*
-* Copyright (c) 2019-2023, Christoph Kubisch. All rights reserved.
+* Copyright (c) 2019-2024, Christoph Kubisch. All rights reserved.
 *
 * Licensed under the Apache License, Version 2.0 (the "License");
 * you may not use this file except in compliance with the License.
@@ -32,7 +32,7 @@
 #endif
 
 #ifdef __cplusplus
-namespace ldrawviewer
+namespace glsldata
 {
   using namespace nvmath;
 #endif

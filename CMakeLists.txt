@@ -9,6 +9,8 @@ Message(STATUS "Processing Project ${PROJNAME}:")
 # this cannot be put anywhere else since we still didn't find CMakeLists_include.txt yet
 #
 
+set(OUTPUT_PATH ${CMAKE_CURRENT_SOURCE_DIR}/bin)
+
 if(NOT BASE_DIRECTORY)
 
   find_path(BASE_DIRECTORY

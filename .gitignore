@@ -1,3 +1,4 @@
 /.clang-format
 /build/*
+/bin/*
 /external/bin_x64/*
