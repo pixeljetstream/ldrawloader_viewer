@@ -92,6 +92,7 @@ class Sample : public nvgl::AppWindowProfilerGL
 
   struct Scene
   {
+    GLuint            vao       = 0;
     GLuint            viewUbo   = 0;
     GLuint            objectUbo = 0;
     LdrModelHDL       model;
@@ -106,6 +107,7 @@ class Sample : public nvgl::AppWindowProfilerGL
   struct Tweak
   {
     nvmath::vec3 lightDir;
+    nvmath::vec4 inheritColor   = {1, 1, 0, 1};
     bool         cull           = true;
     bool         drawRenderPart = false;
     bool         edges          = false;
@@ -226,6 +228,8 @@ bool Sample::initScene()
     glNamedBufferStorage(m_scene.viewUbo, sizeof(glsldata::ViewData), NULL, GL_DYNAMIC_STORAGE_BIT);
     nvgl::newBuffer(m_scene.objectUbo);
     glNamedBufferStorage(m_scene.objectUbo, sizeof(glsldata::ObjectData), NULL, GL_DYNAMIC_STORAGE_BIT);
+
+    glGenVertexArrays(1, &m_scene.vao);
   }
 
   double timeLoadAll;
@@ -322,10 +326,6 @@ bool Sample::begin()
 
   bool validated(true);
 
-  //GLuint defaultVAO;
-  //glGenVertexArrays(1, &defaultVAO);
-  //glBindVertexArray(defaultVAO);
-
   validated = validated && initProgram();
   validated = validated && initFramebuffers(m_windowState.m_winSize[0], m_windowState.m_winSize[1]);
   validated = validated && initScene();
@@ -334,9 +334,10 @@ bool Sample::begin()
 
   m_control.m_sceneOrbit     = nvmath::vec3(0.0f);
   m_control.m_sceneDimension = 1000.0f;
+  m_control.m_sceneUp        = glm::vec3(0, 1, 0);
   m_control.m_viewMatrix =
-      (glm::mat4)nvmath::look_at(nvmath::vec3(m_control.m_sceneOrbit) - nvmath::vec3(0, 0, -m_control.m_sceneDimension),
-                                 nvmath::vec3(m_control.m_sceneOrbit), nvmath::vec3(0, 1, 0));
+      (glm::mat4)nvmath::look_at(nvmath::vec3(m_control.m_sceneOrbit) + nvmath::vec3(0, 0, -m_control.m_sceneDimension),
+                                 nvmath::vec3(m_control.m_sceneOrbit), (nvmath::vec3)m_control.m_sceneUp);
 
   rebuildBuffers();
 
@@ -371,7 +372,8 @@ void Sample::processUI(double time)
   if(ImGui::Begin(PROJECT_NAME, nullptr)) {
     ImGui::Checkbox("colors", &m_tweak.colors);
     ImGui::Checkbox("bf cull", &m_tweak.cull);
-    ImGui::SliderFloat("transparency", &m_tweak.transparency, 0, 1);
+    ImGui::SliderFloat("x-ray transp.", &m_tweak.transparency, 0, 1);
+    ImGui::ColorEdit3("inheritcolor", &m_tweak.inheritColor.x);
     ImGui::Checkbox("edges", &m_tweak.edges);
     ImGui::Checkbox("triangles", &m_tweak.triangles);
     ImGui::Checkbox("wireframe", &m_tweak.wireframe);
@@ -584,12 +586,11 @@ void Sample::rebuildBuffers()
 
 void Sample::drawDebug()
 {
+  glBindVertexArray(m_scene.vao);
+
   glEnable(GL_DEPTH_TEST);
   glEnable(GL_CULL_FACE);
   glUseProgram(m_progManager.get(programs.draw_scene));
-
-  //glVertexAttribFormat(VERTEX_POS,    4, GL_FLOAT, GL_FALSE,  0);
-  //glVertexAttribBinding(VERTEX_POS,   0);
 
   glEnableVertexAttribArray(VERTEX_POS);
   if(m_tweak.drawRenderPart)
@@ -653,10 +654,17 @@ void Sample::drawDebug()
     glsldata::ObjectData obj;
     obj.color = {nvh::frand(), nvh::frand(), nvh::frand(), 1.0f};
 
-    const LdrMaterial* mtl = ldrGetMaterial(m_loader, instance->material);
-    if(mtl && m_tweak.colors) {
-      obj.color = {float(mtl->baseColor[0]) / float(255.0f), float(mtl->baseColor[1]) / float(255.0f),
-                   float(mtl->baseColor[2]) / float(255.0f), 1};
+    if(m_tweak.colors) {
+      if(instance->material == LDR_MATERIALID_INHERIT) {
+        obj.color = {m_tweak.inheritColor[0], m_tweak.inheritColor[1], m_tweak.inheritColor[2], 1};
+      }
+      else {
+        const LdrMaterial* mtl = ldrGetMaterial(m_loader, instance->material);
+        if(mtl) {
+          obj.color = {float(mtl->baseColor[0]) / float(255.0f), float(mtl->baseColor[1]) / float(255.0f),
+                       float(mtl->baseColor[2]) / float(255.0f), 1};
+        }
+      }
     }
 
     memcpy(obj.worldMatrix.mat_array, &instance->transform, sizeof(LdrMatrix));
@@ -777,6 +785,8 @@ void Sample::drawDebug()
   glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, 0);
 
   glDisable(GL_POLYGON_OFFSET_FILL);
+
+  glBindVertexArray(0);
 }
 }  // namespace ldrawviewer
 
