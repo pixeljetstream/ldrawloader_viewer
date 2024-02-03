@@ -43,8 +43,8 @@
 #include "common.h"
 
 namespace ldrawviewer {
-int const SAMPLE_SIZE_WIDTH(800);
-int const SAMPLE_SIZE_HEIGHT(600);
+int const SAMPLE_SIZE_WIDTH(1024);
+int const SAMPLE_SIZE_HEIGHT(1024);
 int const SAMPLE_MAJOR_VERSION(4);
 int const SAMPLE_MINOR_VERSION(5);
 
@@ -90,17 +90,20 @@ class Sample : public nvgl::AppWindowProfilerGL
     uint32_t optionalOffset;
   };
 
+  struct Common
+  {
+    GLuint vao       = 0;
+    GLuint viewUbo   = 0;
+    GLuint objectUbo = 0;
+  };
+
   struct Scene
   {
-    GLuint            vao       = 0;
-    GLuint            viewUbo   = 0;
-    GLuint            objectUbo = 0;
-    LdrModelHDL       model;
-    LdrRenderModelHDL renderModel;
+    LdrModelHDL       model       = nullptr;
+    LdrRenderModelHDL renderModel = nullptr;
 
     GLuint                vbo = 0;
     GLuint                ibo = 0;
-    GLuint                mdi = 0;
     std::vector<DrawPart> drawParts;
   };
 
@@ -129,14 +132,21 @@ class Sample : public nvgl::AppWindowProfilerGL
   double           m_uiTime;
 
   Tweak m_tweak;
-  Tweak m_lastTweak;
+  Tweak m_tweakLast;
+
+  bool m_threadedLoad = false;
+  bool m_renderModel  = false;
+
+  LdrLoaderCreateInfo m_loaderCreateInfo;
+  LdrLoaderCreateInfo m_loaderCreateInfoLast;
+  LdrLoaderHDL        m_loader = nullptr;
 
   glsldata::ViewData m_viewUbo;
 
-  LdrLoaderHDL m_loader;
-  Scene        m_scene;
-  std::string  m_ldrawPath;
-  std::string  m_modelFilename;
+  Scene       m_scene;
+  Common      m_common;
+  std::string m_ldrawPath;
+  std::string m_modelFilename;
 
   nvh::CameraControl m_control;
 
@@ -148,8 +158,12 @@ class Sample : public nvgl::AppWindowProfilerGL
   bool initProgram();
   bool initFramebuffers(int width, int height);
   bool initScene();
+  void deinitScene();
 
-  void rebuildBuffers();
+  bool resetLoader();
+  bool resetScene();
+
+  void rebuildSceneBuffers();
   void drawDebug();
 
 
@@ -167,7 +181,7 @@ class Sample : public nvgl::AppWindowProfilerGL
   {
     const uint8_t* current = (const uint8_t*)&currentVar;
     size_t         offs    = (size_t)(current) - (size_t)(&m_tweak);
-    const uint8_t* last    = ((const uint8_t*)&m_lastTweak) + offs;
+    const uint8_t* last    = ((const uint8_t*)&m_tweakLast) + offs;
 
     return memcmp(current, last, sizeof(T)) != 0;
   }
@@ -175,8 +189,17 @@ class Sample : public nvgl::AppWindowProfilerGL
 public:
   Sample()
   {
+    m_loaderCreateInfo                     = {};
+    m_loaderCreateInfo.partFixMode         = LDR_PART_FIX_NONE;
+    m_loaderCreateInfo.renderpartBuildMode = LDR_RENDERPART_BUILD_ONLOAD;
+    m_loaderCreateInfo.partFixTjunctions   = LDR_TRUE;
+    m_loaderCreateInfo.partHiResPrimitives = LDR_FALSE;
+    m_loaderCreateInfo.renderpartChamfer   = 0.35f;
+
     m_parameterList.addFilename(".ldr", &m_modelFilename);
     m_parameterList.addFilename(".mpd", &m_modelFilename);
+    m_parameterList.add("threadedload", &m_threadedLoad);
+    m_parameterList.add("renderpartbuild", (int*)&m_loaderCreateInfo.renderpartBuildMode);
     m_parameterList.add("ldrawpath", &m_ldrawPath);
 
     const char* ldrawPath = getenv("LDRAWDIR");
@@ -223,14 +246,8 @@ bool Sample::initFramebuffers(int width, int height)
 
 bool Sample::initScene()
 {
-  {
-    nvgl::newBuffer(m_scene.viewUbo);
-    glNamedBufferStorage(m_scene.viewUbo, sizeof(glsldata::ViewData), NULL, GL_DYNAMIC_STORAGE_BIT);
-    nvgl::newBuffer(m_scene.objectUbo);
-    glNamedBufferStorage(m_scene.objectUbo, sizeof(glsldata::ObjectData), NULL, GL_DYNAMIC_STORAGE_BIT);
-
-    glGenVertexArrays(1, &m_scene.vao);
-  }
+  if(m_modelFilename.empty())
+    return true;
 
   double timeLoadAll;
   double time;
@@ -238,16 +255,18 @@ bool Sample::initScene()
   timeLoadAll = -m_profiler.getMicroSeconds();
 
   LdrResult result;
-  if(false) {
+  if(m_threadedLoad) {
     time   = -m_profiler.getMicroSeconds();
     result = ldrCreateModel(m_loader, m_modelFilename.c_str(), LDR_FALSE, &m_scene.model);
     assert(result == LDR_SUCCESS || result == LDR_WARNING_PART_NOT_FOUND);
     time += m_profiler.getMicroSeconds();
     printf("dependency time %.2f ms\n", time / 1000.0f);
 
+    if(result != LDR_SUCCESS)
+      return false;
+
     // threaded loaded
     time = -m_profiler.getMicroSeconds();
-
 
     uint32_t numParts   = ldrGetNumRegisteredParts(m_loader);
     uint32_t numThreads = std::thread::hardware_concurrency();
@@ -284,6 +303,9 @@ bool Sample::initScene()
     assert(result == LDR_SUCCESS || result == LDR_WARNING_PART_NOT_FOUND);
     time += m_profiler.getMicroSeconds();
     printf("load time %.2f ms\n", time / 1000.0f);
+
+    if(result != LDR_SUCCESS)
+      return false;
   }
 
   timeLoadAll += m_profiler.getMicroSeconds();
@@ -298,59 +320,99 @@ bool Sample::initScene()
   //ldrBuildRenderParts(m_loader, ~0, nullptr, 0);
   time += m_profiler.getMicroSeconds();
 
-  result = ldrCreateRenderModel(m_loader, m_scene.model, LDR_TRUE, &m_scene.renderModel);
-  assert(result == LDR_SUCCESS || result == LDR_WARNING_PART_NOT_FOUND);
+  if(m_loaderCreateInfo.renderpartBuildMode == LDR_RENDERPART_BUILD_ONLOAD) {
+    result = ldrCreateRenderModel(m_loader, m_scene.model, LDR_TRUE, &m_scene.renderModel);
+    assert(result == LDR_SUCCESS || result == LDR_WARNING_PART_NOT_FOUND);
+  }
 
   printf("build time %.2f ms\n", time / 1000.0f);
 
-  srand(1238);
-
-  return true;
+  return result == LDR_SUCCESS;
 }
 
+
+void Sample::deinitScene()
+{
+  ldrDestroyModel(m_loader, m_scene.model);
+  ldrDestroyRenderModel(m_loader, m_scene.renderModel);
+
+  nvgl::deleteBuffer(m_scene.vbo);
+  nvgl::deleteBuffer(m_scene.ibo);
+
+  glFlush();
+  glFinish();
+
+  m_scene = Scene();
+}
+
+bool Sample::resetLoader()
+{
+  ldrDestroyLoader(m_loader);
+
+  LdrResult result = ldrCreateLoader(&m_loaderCreateInfo, &m_loader);
+  assert(result == LDR_SUCCESS);
+
+  m_loaderCreateInfoLast = m_loaderCreateInfo;
+
+  printf("reset loader status: %d\n", result == LDR_SUCCESS ? 1 : 0);
+  return result == LDR_SUCCESS;
+}
+
+bool Sample::resetScene()
+{
+  deinitScene();
+  bool result = resetLoader();
+  result      = result && initScene();
+  if(result) {
+    rebuildSceneBuffers();
+  }
+  printf("reset scene status: %d\n", result ? 1 : 0);
+  return result;
+}
 
 bool Sample::begin()
 {
   ImGuiH::Init(m_windowState.m_winSize[0], m_windowState.m_winSize[1], this);
   ImGui::InitGL();
 
-  LdrLoaderCreateInfo createInfo = {};
-  createInfo.partFixMode         = LDR_PART_FIX_NONE;
-  createInfo.renderpartBuildMode = LDR_RENDERPART_BUILD_ONLOAD;
-  createInfo.partFixTjunctions   = LDR_TRUE;
-  createInfo.partHiResPrimitives = LDR_FALSE;
-  createInfo.renderpartChamfer   = 0.35f;
-  createInfo.basePath            = m_ldrawPath.c_str();
-  LdrResult result               = ldrCreateLoader(&createInfo, &m_loader);
-  assert(result == LDR_SUCCESS);
+  nvgl::newBuffer(m_common.viewUbo);
+  glNamedBufferStorage(m_common.viewUbo, sizeof(glsldata::ViewData), NULL, GL_DYNAMIC_STORAGE_BIT);
+  nvgl::newBuffer(m_common.objectUbo);
+  glNamedBufferStorage(m_common.objectUbo, sizeof(glsldata::ObjectData), NULL, GL_DYNAMIC_STORAGE_BIT);
+  nvgl::newVertexArray(m_common.vao);
 
-  bool validated(true);
+  m_loaderCreateInfo.basePath = m_ldrawPath.c_str();
+
+  bool validated = resetLoader();
 
   validated = validated && initProgram();
   validated = validated && initFramebuffers(m_windowState.m_winSize[0], m_windowState.m_winSize[1]);
   validated = validated && initScene();
 
-  m_tweak.lightDir = nvmath::normalize(nvmath::vec3(-1, 1, 1));
+  m_tweak.lightDir = nvmath::normalize(nvmath::vec3(-1, -1, 1));
 
   m_control.m_sceneOrbit     = nvmath::vec3(0.0f);
   m_control.m_sceneDimension = 1000.0f;
-  m_control.m_sceneUp        = glm::vec3(0, 1, 0);
+  m_control.m_sceneUp        = glm::vec3(0, -1, 0);
   m_control.m_viewMatrix =
       (glm::mat4)nvmath::look_at(nvmath::vec3(m_control.m_sceneOrbit) + nvmath::vec3(0, 0, -m_control.m_sceneDimension),
                                  nvmath::vec3(m_control.m_sceneOrbit), (nvmath::vec3)m_control.m_sceneUp);
 
-  rebuildBuffers();
+  rebuildSceneBuffers();
 
-  m_lastTweak = m_tweak;
+  m_tweakLast = m_tweak;
 
   return validated;
 }
 
 void Sample::end()
 {
-  ldrDestroyRenderModel(m_loader, m_scene.renderModel);
-  ldrDestroyModel(m_loader, m_scene.model);
+  deinitScene();
   ldrDestroyLoader(m_loader);
+  nvgl::deleteBuffer(m_common.objectUbo);
+  nvgl::deleteBuffer(m_common.viewUbo);
+  nvgl::deleteVertexArray(m_common.vao);
+
   ImGui::ShutdownGL();
 }
 
@@ -368,34 +430,121 @@ void Sample::processUI(double time)
   m_uiTime = time;
 
   ImGui::NewFrame();
-  ImGui::SetNextWindowSize(ImVec2(350, 0), ImGuiCond_FirstUseEver);
-  if(ImGui::Begin(PROJECT_NAME, nullptr)) {
-    ImGui::Checkbox("colors", &m_tweak.colors);
-    ImGui::Checkbox("bf cull", &m_tweak.cull);
-    ImGui::SliderFloat("x-ray transp.", &m_tweak.transparency, 0, 1);
-    ImGui::ColorEdit3("inheritcolor", &m_tweak.inheritColor.x);
-    ImGui::Checkbox("edges", &m_tweak.edges);
-    ImGui::Checkbox("triangles", &m_tweak.triangles);
-    ImGui::Checkbox("wireframe", &m_tweak.wireframe);
-    ImGui::Checkbox("optional", &m_tweak.optional);
-    ImGui::Checkbox("draw render part", &m_tweak.drawRenderPart);
-    ImGui::Checkbox("draw render part chamfer", &m_tweak.chamfered);
-    ImGui::InputInt("part", &m_tweak.part);
-    ImGui::InputInt("vertex", &m_tweak.vertex);
-    ImGui::InputInt("tri", &m_tweak.tri);
-    ImGui::InputInt("edge", &m_tweak.edge);
-    if(m_tweak.vertex >= 0 && m_tweak.part >= 0) {
-      const LdrPart*       part  = ldrGetPart(m_loader, m_tweak.part);
-      const LdrRenderPart* rpart = ldrGetRenderPart(m_loader, m_tweak.part);
+  ImGui::SetNextWindowSize(ImVec2(380, 500), ImGuiCond_FirstUseEver);
+  ImGui::SetNextWindowPos(ImVec2(5, 5), ImGuiCond_FirstUseEver);
 
-      const float* pos =
-          m_tweak.drawRenderPart ? &rpart->vertices[m_tweak.vertex].position.x : &part->positions[m_tweak.vertex].x;
-      ImGui::Text("%.3f %.3f %.3f\n", pos[0], pos[1], pos[2]);
+  if(ImGui::Begin(PROJECT_NAME, nullptr)) {
+    ImGui::PushItemWidth(200);
+
+    if(ImGui::Button("LOAD")) {
+      std::string newFile = NVPWindow::openFileDialog("Pick Model", "Supported (ldr,mpd)|*.ldr;*.mpd|All (*.*)|*.*");
+      if(!newFile.empty()) {
+        m_modelFilename = newFile;
+        deinitScene();
+        resetLoader();
+        initScene();
+        rebuildSceneBuffers();
+      }
     }
-    if(m_tweak.part >= 0) {
-      const LdrPart* part = ldrGetPart(m_loader, m_tweak.part);
-      ImGui::Text("%s\n", part->name);
+    ImGui::SameLine();
+    if(ImGui::Button("RELOAD")) {
+      resetScene();
     }
+    if(m_scene.model && ImGui::CollapsingHeader("model settings", ImGuiTreeNodeFlags_DefaultOpen)) {
+      ImGui::Checkbox("colors", &m_tweak.colors);
+      ImGui::Checkbox("bf cull", &m_tweak.cull);
+      ImGui::SliderFloat("x-ray transp.", &m_tweak.transparency, 0, 1);
+      ImGui::ColorEdit3("inheritcolor", &m_tweak.inheritColor.x);
+      ImGui::Checkbox("edges", &m_tweak.edges);
+      ImGui::Checkbox("triangles", &m_tweak.triangles);
+      ImGui::Checkbox("wireframe", &m_tweak.wireframe);
+      ImGui::Checkbox("optional", &m_tweak.optional);
+      if(m_scene.renderModel) {
+        ImGui::Checkbox("draw render part", &m_tweak.drawRenderPart);
+        ImGui::Checkbox("draw render part chamfer", &m_tweak.chamfered);
+      }
+      ImGui::InputInt("part", &m_tweak.part);
+      ImGui::InputInt("vertex", &m_tweak.vertex);
+      ImGui::InputInt("tri", &m_tweak.tri);
+      ImGui::InputInt("edge", &m_tweak.edge);
+      
+      if (m_tweak.part >= 0)
+      {
+        m_tweak.part = std::min((uint32_t)m_tweak.part, ldrGetNumRegisteredParts(m_loader));
+      }
+
+      if(m_tweak.part >= 0 && m_tweak.tri >= 0) 
+      {
+        const LdrVertexIndex* indices = nullptr;
+        if(m_scene.renderModel && m_tweak.drawRenderPart) {
+          const LdrRenderPart* rpart = ldrGetRenderPart(m_loader, m_tweak.part);
+          m_tweak.tri                = std::min(uint32_t(m_tweak.tri), rpart->num_triangles - 1);
+          indices                    = &rpart->triangles[m_tweak.tri * 3];
+        }
+        else {
+          const LdrPart* part = ldrGetPart(m_loader, m_tweak.part);
+          m_tweak.tri         = std::min(uint32_t(m_tweak.tri), part->num_triangles - 1);
+          indices             = &part->triangles[m_tweak.tri * 3];
+        }
+        ImGui::Text("tri: %d %d %d\n", indices[0], indices[1], indices[2]);
+      }
+
+      if(m_tweak.part >= 0 && m_tweak.edge >= 0) {
+        const LdrVertexIndex* indices = nullptr;
+        if(m_scene.renderModel && m_tweak.drawRenderPart) {
+          const LdrRenderPart* rpart = ldrGetRenderPart(m_loader, m_tweak.part);
+          m_tweak.edge                = std::min(uint32_t(m_tweak.edge), rpart->num_lines - 1);
+          indices                    = &rpart->lines[m_tweak.edge * 2];
+        }
+        else {
+          const LdrPart* part = ldrGetPart(m_loader, m_tweak.part);
+          m_tweak.edge        = std::min(uint32_t(m_tweak.edge), part->num_lines - 1);
+          indices             = &part->lines[m_tweak.edge * 2];
+        }
+        ImGui::Text("line: %d %d\n", indices[0], indices[1]);
+      }
+
+      if(m_tweak.vertex >= 0 && m_tweak.part >= 0) {
+        const LdrPart* part = ldrGetPart(m_loader, m_tweak.part);
+
+        const float* pos = nullptr;
+        if(m_scene.renderModel && m_tweak.drawRenderPart) {
+
+          const LdrRenderPart* rpart = ldrGetRenderPart(m_loader, m_tweak.part);
+          m_tweak.vertex             = std::min(uint32_t(m_tweak.vertex), rpart->num_vertices - 1);
+          pos                        = &rpart->vertices[m_tweak.vertex].position.x;
+        }
+        else {
+          const LdrPart* part = ldrGetPart(m_loader, m_tweak.part);
+          m_tweak.vertex      = std::min(uint32_t(m_tweak.vertex), part->num_positions - 1);
+          pos                 = &part->positions[m_tweak.vertex].x;
+        }
+        ImGui::Text("vert: %.3f %.3f %.3f\n", pos[0], pos[1], pos[2]);
+      }
+
+      if(m_tweak.part >= 0) {
+        const LdrPart* part = ldrGetPart(m_loader, m_tweak.part);
+        if(part) {
+          ImGui::Text("%s\n", part->name);
+        }
+      }
+    }
+
+    if(ImGui::CollapsingHeader("load settings")) {
+      /*
+        m_loaderCreateInfo.partFixMode         = LDR_PART_FIX_NONE;
+        m_loaderCreateInfo.renderpartBuildMode = LDR_RENDERPART_BUILD_ONLOAD;
+        m_loaderCreateInfo.partFixTjunctions   = LDR_TRUE;
+        m_loaderCreateInfo.partHiResPrimitives = LDR_FALSE;
+        m_loaderCreateInfo.renderpartChamfer   = 0.35f;
+      */
+      ImGui::Checkbox("build renderparts", (bool*)&m_loaderCreateInfo.renderpartBuildMode);
+      ImGui::Checkbox("fix parts", (bool*)&m_loaderCreateInfo.partFixMode);
+      ImGui::Checkbox("fix t junctions", (bool*)&m_loaderCreateInfo.partFixTjunctions);
+      ImGui::Checkbox("hi-res primitives", (bool*)&m_loaderCreateInfo.partHiResPrimitives);
+      ImGui::InputFloat("render chamfer", &m_loaderCreateInfo.renderpartChamfer, 0, 0, "%.3f", ImGuiInputTextFlags_EnterReturnsTrue);
+    }
+    ImGui::PopItemWidth();
   }
   ImGui::End();
 }
@@ -437,7 +586,7 @@ void Sample::think(double time)
     m_viewUbo.time            = float(time);
     m_viewUbo.opacity         = 1.0f - m_tweak.transparency;
 
-    glNamedBufferSubData(m_scene.viewUbo, 0, sizeof(glsldata::ViewData), &m_viewUbo);
+    glNamedBufferSubData(m_common.viewUbo, 0, sizeof(glsldata::ViewData), &m_viewUbo);
 
     glBindFramebuffer(GL_FRAMEBUFFER, fbos.scene);
     glViewport(0, 0, width, height);
@@ -448,8 +597,19 @@ void Sample::think(double time)
     glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT | GL_STENCIL_BUFFER_BIT);
   }
 
-  if(tweakChanged(m_tweak.chamfered) || tweakChanged(m_tweak.drawRenderPart)) {
-    rebuildBuffers();
+  bool doRebuild = false;
+  if(memcmp(&m_loaderCreateInfoLast, &m_loaderCreateInfo, sizeof(m_loaderCreateInfo)) != 0) {
+    deinitScene();
+    resetLoader();
+    initScene();
+    doRebuild = true;
+  }
+
+  if(!m_scene.renderModel)
+    m_tweak.drawRenderPart = false;
+
+  if(doRebuild || tweakChanged(m_tweak.chamfered) || tweakChanged(m_tweak.drawRenderPart)) {
+    rebuildSceneBuffers();
   }
 
   {
@@ -472,7 +632,7 @@ void Sample::think(double time)
 
   ImGui::EndFrame();
 
-  m_lastTweak = m_tweak;
+  m_tweakLast = m_tweak;
 }
 
 void Sample::resize(int width, int height)
@@ -480,9 +640,11 @@ void Sample::resize(int width, int height)
   initFramebuffers(width, height);
 }
 
-void Sample::rebuildBuffers()
+void Sample::rebuildSceneBuffers()
 {
   LdrModelHDL model = m_scene.model;
+  if(!model)
+    return;
 
   uint32_t numParts = ldrGetNumRegisteredParts(m_loader);
   m_scene.drawParts.resize(numParts);
@@ -501,42 +663,47 @@ void Sample::rebuildBuffers()
     if(!activeParts[i])
       continue;
 
-    const LdrPart*       part  = ldrGetPart(m_loader, i);
-    const LdrRenderPart* rpart = ldrGetRenderPart(m_loader, i);
+    const LdrPart* part = ldrGetPart(m_loader, i);
 
     DrawPart& drawPart = m_scene.drawParts[i];
+
+    if(!m_tweak.drawRenderPart) {
+      drawPart.vertexCount    = part->num_positions;
+      drawPart.triangleCount  = part->num_triangles;
+      drawPart.edgesCount     = part->num_lines;
+      drawPart.optionalCount  = part->num_optional_lines;
+      drawPart.triangleCountC = 0;
+    }
+    else {
+      const LdrRenderPart* rpart = ldrGetRenderPart(m_loader, i);
+      if(rpart) {
+        drawPart.vertexCount    = rpart->num_vertices;
+        drawPart.triangleCount  = rpart->num_triangles;
+        drawPart.edgesCount     = rpart->num_lines;
+        drawPart.optionalCount  = 0;
+        drawPart.triangleCountC = rpart->num_trianglesC;
+      }
+      else {
+        drawPart.vertexCount    = 0;
+        drawPart.triangleCount  = 0;
+        drawPart.edgesCount     = 0;
+        drawPart.optionalCount  = 0;
+        drawPart.triangleCountC = 0;
+      }
+    }
 
     drawPart.vertexOffset   = vboOffset;
     drawPart.triangleOffset = iboOffset;
 
-    if(!m_tweak.drawRenderPart) {
-      drawPart.vertexCount   = part->num_positions;
-      drawPart.triangleCount = part->num_triangles;
-      drawPart.edgesCount    = part->num_lines;
-      drawPart.optionalCount = part->num_optional_lines;
+    vboOffset += drawPart.vertexCount;
+    iboOffset += drawPart.triangleCount * 3;
 
-      vboOffset += part->num_positions;
-      iboOffset += part->num_triangles * 3;
-
-      drawPart.edgesOffset = iboOffset;
-      iboOffset += part->num_lines * 2;
-      drawPart.optionalOffset = iboOffset;
-      iboOffset += part->num_optional_lines * 2;
-    }
-    else {
-      drawPart.vertexCount    = rpart->num_vertices;
-      drawPart.triangleCount  = rpart->num_triangles;
-      drawPart.edgesCount     = rpart->num_lines;
-      drawPart.triangleCountC = rpart->num_trianglesC;
-
-      vboOffset += rpart->num_vertices;
-      iboOffset += rpart->num_triangles * 3;
-
-      drawPart.edgesOffset = iboOffset;
-      iboOffset += rpart->num_lines * 2;
-      drawPart.triangleOffsetC = iboOffset;
-      iboOffset += rpart->num_trianglesC * 3;
-    }
+    drawPart.edgesOffset = iboOffset;
+    iboOffset += drawPart.edgesCount * 2;
+    drawPart.optionalOffset = iboOffset;
+    iboOffset += drawPart.optionalCount * 2;
+    drawPart.triangleOffsetC = iboOffset;
+    iboOffset += drawPart.triangleCountC * 3;
   }
 
   glFlush();
@@ -545,10 +712,15 @@ void Sample::rebuildBuffers()
   nvgl::newBuffer(m_scene.vbo);
   nvgl::newBuffer(m_scene.ibo);
 
+  glFlush();
+  glFinish();
+
   size_t vertexSize = (m_tweak.drawRenderPart ? sizeof(LdrRenderVertex) : sizeof(LdrVector));
 
-  glNamedBufferStorage(m_scene.vbo, vertexSize * vboOffset, nullptr, GL_DYNAMIC_STORAGE_BIT);
-  glNamedBufferStorage(m_scene.ibo, sizeof(uint32_t) * iboOffset, nullptr, GL_DYNAMIC_STORAGE_BIT);
+  if(vboOffset)
+    glNamedBufferStorage(m_scene.vbo, vertexSize * vboOffset, nullptr, GL_DYNAMIC_STORAGE_BIT);
+  if(iboOffset)
+    glNamedBufferStorage(m_scene.ibo, sizeof(uint32_t) * iboOffset, nullptr, GL_DYNAMIC_STORAGE_BIT);
 
   for(uint32_t i = 0; i < numParts; i++) {
     if(!activeParts[i])
@@ -569,6 +741,9 @@ void Sample::rebuildBuffers()
                            sizeof(uint32_t) * drawPart.optionalCount * 2, part->optional_lines);
     }
     else {
+      if(!rpart)
+        continue;
+
       const LdrVertexIndex* triangles = m_tweak.chamfered && rpart->flag.canChamfer ? rpart->trianglesC : rpart->triangles;
       uint32_t num_triangles = m_tweak.chamfered && rpart->flag.canChamfer ? rpart->num_trianglesC : rpart->num_triangles;
 
@@ -586,7 +761,10 @@ void Sample::rebuildBuffers()
 
 void Sample::drawDebug()
 {
-  glBindVertexArray(m_scene.vao);
+  if(!m_scene.model)
+    return;
+
+  glBindVertexArray(m_common.vao);
 
   glEnable(GL_DEPTH_TEST);
   glEnable(GL_CULL_FACE);
@@ -601,8 +779,8 @@ void Sample::drawDebug()
   glEnable(GL_POLYGON_OFFSET_FILL);
   glLineStipple(2, 0xAAAA);
 
-  glBindBufferBase(GL_UNIFORM_BUFFER, UBO_SCENE, m_scene.viewUbo);
-  glBindBufferBase(GL_UNIFORM_BUFFER, UBO_OBJECT, m_scene.objectUbo);
+  glBindBufferBase(GL_UNIFORM_BUFFER, UBO_SCENE, m_common.viewUbo);
+  glBindBufferBase(GL_UNIFORM_BUFFER, UBO_OBJECT, m_common.objectUbo);
 
   bool cullFace = true;
   bool ccw      = true;
@@ -639,14 +817,13 @@ void Sample::drawDebug()
                           (const void*)offsetof(LdrRenderVertex, normal));
   }
 
-  glBindBuffer(GL_UNIFORM_BUFFER, m_scene.objectUbo);
+  glBindBuffer(GL_UNIFORM_BUFFER, m_common.objectUbo);
 
   LdrModelHDL model = m_scene.model;
   for(uint32_t i = 0; i < model->num_instances; i++) {
-    const LdrInstance*   instance = &model->instances[i];
-    const LdrPart*       part     = ldrGetPart(m_loader, instance->part);
-    const LdrRenderPart* rpart    = ldrGetRenderPart(m_loader, instance->part);
-    const DrawPart&      drawPart = m_scene.drawParts[instance->part];
+    const LdrInstance* instance = &model->instances[i];
+    const LdrPart*     part     = ldrGetPart(m_loader, instance->part);
+    const DrawPart&    drawPart = m_scene.drawParts[instance->part];
 
     if(m_tweak.part >= 0 && instance->part != m_tweak.part)
       continue;
@@ -725,6 +902,8 @@ void Sample::drawDebug()
       }
     }
     else {
+      const LdrRenderPart* rpart = ldrGetRenderPart(m_loader, instance->part);
+
       uint32_t triangles = m_tweak.chamfered && rpart->flag.canChamfer ? drawPart.triangleOffsetC : drawPart.triangleOffset;
       uint32_t num_triangles = m_tweak.chamfered && rpart->flag.canChamfer ? rpart->num_trianglesC : rpart->num_triangles;
 
@@ -760,14 +939,17 @@ void Sample::drawDebug()
         glDrawArrays(GL_POINTS, m_tweak.vertex + drawPart.vertexOffset, 1);
       }
       if(m_tweak.tri >= 0) {
-        glUniform1f(0, 2.0f);
-        glLineWidth(4 * widthScale);
+        glUniform1f(0, 1.7f);
+        glLineWidth(3 * widthScale);
+        glEnable(GL_LINE_STIPPLE);
+        glLineStipple(3, 0xAAAA);
         glDrawElementsBaseVertex(GL_LINE_LOOP, 3, GL_UNSIGNED_INT,
                                  (const void*)(sizeof(uint32_t) * (drawPart.triangleOffset + (m_tweak.tri * 3))),
                                  drawPart.vertexOffset);
+        glDisable(GL_LINE_STIPPLE);
       }
       if(m_tweak.edge >= 0) {
-        glUniform1f(0, 1.5f);
+        glUniform1f(0, 2.0f);
         glLineWidth(2 * widthScale);
         glDrawElementsBaseVertex(GL_LINES, 2, GL_UNSIGNED_INT,
                                  (const void*)(sizeof(uint32_t) * (drawPart.edgesOffset + (m_tweak.edge * 2))),
@@ -784,7 +966,14 @@ void Sample::drawDebug()
   glBindBuffer(GL_ARRAY_BUFFER, 0);
   glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, 0);
 
+  glDisable(GL_DEPTH_TEST);
+  glDisable(GL_CULL_FACE);
+  glPolygonMode(GL_FRONT_AND_BACK, GL_FILL);
   glDisable(GL_POLYGON_OFFSET_FILL);
+  glLineWidth(1);
+  glPointSize(1);
+  glDisable(GL_LINE_STIPPLE);
+  glUseProgram(0);
 
   glBindVertexArray(0);
 }

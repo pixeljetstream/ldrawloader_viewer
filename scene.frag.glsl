@@ -58,6 +58,13 @@ void main()
   else {
     out_Color = objColor * colorMul;
   }
+  
+  if (!gl_FrontFacing)
+  {
+    ivec2 spos = ivec2(gl_FragCoord.xy) / 8;
+    int state = (spos.x & 1) ^ (spos.y & 1);
+    out_Color += (float(state)-0.5)*0.1;
+  }
 
   out_Color.w = view.opacity;
 }
