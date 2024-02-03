@@ -31,13 +31,36 @@ in Interpolants {
 
 layout(location=0,index=0) out vec4 out_Color;
 
-layout(location=0) uniform float colorMul;
-layout(location=1) uniform bool lighting;
-
+layout(location=UNI_COLORMUL) uniform float colorMul;
+layout(location=UNI_LIGHTING) uniform bool lighting;
+layout(location=UNI_MATERIALID) uniform uint materialID;
+layout(location=UNI_MATERIALIDOFFSET) uniform uint materialIDOffset;
 
 void main()
 {
   vec4 objColor = max(vec4(0.1),object.color);
+  if (view.useObjectColor != 0)
+  {
+    uint usedMaterialID = materialID;
+  
+    if (materialIDOffset != ~0) {
+      // using gl_PrimitiveID may not be exactly fast
+      // more portable is to split vertices along material edges and encode materialID within them
+      // should add support in loader library for that
+      usedMaterialID = materialIndices[materialIDOffset + gl_PrimitiveID];
+      if (usedMaterialID == 16) {
+        usedMaterialID = materialID;
+      }
+    }
+  
+    if (usedMaterialID == 16) {
+      objColor = view.inheritColor;
+    }
+    else {
+      objColor = materials[usedMaterialID].color;
+    }
+  }
+  
 
   if (lighting){  
     vec3 wEyePos = vec3(view.viewMatrixIT[0].w,view.viewMatrixIT[1].w,view.viewMatrixIT[2].w);

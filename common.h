@@ -17,13 +17,21 @@
 * SPDX-License-Identifier: Apache-2.0
 */
 
+#define UNI_COLORMUL         0
+#define UNI_LIGHTING         1
+#define UNI_MATERIALID       2
+#define UNI_MATERIALIDOFFSET 3
 
-#define VERTEX_POS    0
-#define VERTEX_NORMAL 1
-#define VERTEX_UV     2
 
-#define UBO_SCENE     0
-#define UBO_OBJECT    1
+#define VERTEX_POS           0
+#define VERTEX_NORMAL        1
+#define VERTEX_UV            2
+
+#define UBO_SCENE            0
+#define UBO_OBJECT           1
+
+#define SSBO_MATERIALS       0
+#define SSBO_MATERIALIDS     1
 
 #if defined(GL_core_profile) || defined(GL_compatibility_profile) || defined(GL_es_profile)
 
@@ -32,28 +40,38 @@
 #endif
 
 #ifdef __cplusplus
-namespace glsldata
-{
-  using namespace nvmath;
+namespace glsldata {
+using namespace nvmath;
 #endif
 
-struct ViewData {
-  mat4  viewProjMatrix;
-  mat4  viewProjMatrixI;
-  mat4  viewMatrix;
-  mat4  viewMatrixI;
-  mat4  viewMatrixIT;
-  
+struct ViewData
+{
+  mat4 viewProjMatrix;
+  mat4 viewProjMatrixI;
+  mat4 viewMatrix;
+  mat4 viewMatrixI;
+  mat4 viewMatrixIT;
+
+  vec4 inheritColor;
+
   vec4  wLightPos;
   uvec2 viewport;
   float time;
   float opacity;
+
+  uint useObjectColor;
 };
 
-struct ObjectData {
-  mat4  worldMatrix;
-  mat4  worldMatrixIT;
-  vec4  color;
+struct ObjectData
+{
+  mat4 worldMatrix;
+  mat4 worldMatrixIT;
+  vec4 color;
+};
+
+struct MaterialData
+{
+  vec4 color;
 };
 
 #ifdef __cplusplus
@@ -62,12 +80,24 @@ struct ObjectData {
 
 #if defined(GL_core_profile) || defined(GL_compatibility_profile) || defined(GL_es_profile)
 
-layout(std140,binding=UBO_SCENE) uniform sceneBuffer {
-  ViewData   view;
+layout(std140, binding = UBO_SCENE) uniform sceneBuffer
+{
+  ViewData view;
 };
 
-layout(std140,binding=UBO_OBJECT) uniform objectBuffer {
-  ObjectData  object;
+layout(std140, binding = UBO_OBJECT) uniform objectBuffer
+{
+  ObjectData object;
+};
+
+layout(std430, binding = SSBO_MATERIALS) buffer materialBuffer
+{
+  MaterialData materials[];
+};
+
+layout(std430, binding = SSBO_MATERIALIDS) buffer materialIdBuffer
+{
+  uint materialIndices[];
 };
 
 #endif

@@ -88,13 +88,16 @@ class Sample : public nvgl::AppWindowProfilerGL
     uint32_t edgesOffset;
     uint32_t optionalCount;
     uint32_t optionalOffset;
+    uint32_t materialIDOffset;
+    uint32_t materialIDOffsetC;
   };
 
   struct Common
   {
-    GLuint vao       = 0;
-    GLuint viewUbo   = 0;
-    GLuint objectUbo = 0;
+    GLuint vao             = 0;
+    GLuint viewBuffer      = 0;
+    GLuint objectBuffer    = 0;
+    GLuint materialsBuffer = 0;
   };
 
   struct Scene
@@ -102,8 +105,9 @@ class Sample : public nvgl::AppWindowProfilerGL
     LdrModelHDL       model       = nullptr;
     LdrRenderModelHDL renderModel = nullptr;
 
-    GLuint                vbo = 0;
-    GLuint                ibo = 0;
+    GLuint                vertexBuffer        = 0;
+    GLuint                indexBuffer         = 0;
+    GLuint                materialIndexBuffer = 0;
     std::vector<DrawPart> drawParts;
   };
 
@@ -336,8 +340,9 @@ void Sample::deinitScene()
   ldrDestroyModel(m_loader, m_scene.model);
   ldrDestroyRenderModel(m_loader, m_scene.renderModel);
 
-  nvgl::deleteBuffer(m_scene.vbo);
-  nvgl::deleteBuffer(m_scene.ibo);
+  nvgl::deleteBuffer(m_scene.vertexBuffer);
+  nvgl::deleteBuffer(m_scene.indexBuffer);
+  nvgl::deleteBuffer(m_scene.materialIndexBuffer);
 
   glFlush();
   glFinish();
@@ -348,11 +353,28 @@ void Sample::deinitScene()
 bool Sample::resetLoader()
 {
   ldrDestroyLoader(m_loader);
+  m_loader = nullptr;
 
   LdrResult result = ldrCreateLoader(&m_loaderCreateInfo, &m_loader);
   assert(result == LDR_SUCCESS);
 
   m_loaderCreateInfoLast = m_loaderCreateInfo;
+
+  if(m_loader) {
+    std::vector<glsldata::MaterialData> materials;
+    uint32_t                            numMaterials = ldrGetNumRegisteredMaterials(m_loader);
+    materials.resize(numMaterials);
+
+    for(uint32_t m = 0; m < numMaterials; m++) {
+      const LdrMaterial* mtl = ldrGetMaterial(m_loader, m);
+      materials[m].color     = {float(mtl->baseColor[0]) / float(255.0f), float(mtl->baseColor[1]) / float(255.0f),
+                                float(mtl->baseColor[2]) / float(255.0f), 1};
+    }
+
+    nvgl::newBuffer(m_common.materialsBuffer);
+    glNamedBufferStorage(m_common.materialsBuffer, sizeof(glsldata::MaterialData) * materials.size(), materials.data(), 0);
+  }
+
 
   printf("reset loader status: %d\n", result == LDR_SUCCESS ? 1 : 0);
   return result == LDR_SUCCESS;
@@ -375,10 +397,10 @@ bool Sample::begin()
   ImGuiH::Init(m_windowState.m_winSize[0], m_windowState.m_winSize[1], this);
   ImGui::InitGL();
 
-  nvgl::newBuffer(m_common.viewUbo);
-  glNamedBufferStorage(m_common.viewUbo, sizeof(glsldata::ViewData), NULL, GL_DYNAMIC_STORAGE_BIT);
-  nvgl::newBuffer(m_common.objectUbo);
-  glNamedBufferStorage(m_common.objectUbo, sizeof(glsldata::ObjectData), NULL, GL_DYNAMIC_STORAGE_BIT);
+  nvgl::newBuffer(m_common.viewBuffer);
+  glNamedBufferStorage(m_common.viewBuffer, sizeof(glsldata::ViewData), NULL, GL_DYNAMIC_STORAGE_BIT);
+  nvgl::newBuffer(m_common.objectBuffer);
+  glNamedBufferStorage(m_common.objectBuffer, sizeof(glsldata::ObjectData), NULL, GL_DYNAMIC_STORAGE_BIT);
   nvgl::newVertexArray(m_common.vao);
 
   m_loaderCreateInfo.basePath = m_ldrawPath.c_str();
@@ -409,8 +431,9 @@ void Sample::end()
 {
   deinitScene();
   ldrDestroyLoader(m_loader);
-  nvgl::deleteBuffer(m_common.objectUbo);
-  nvgl::deleteBuffer(m_common.viewUbo);
+  nvgl::deleteBuffer(m_common.objectBuffer);
+  nvgl::deleteBuffer(m_common.viewBuffer);
+  nvgl::deleteBuffer(m_common.materialsBuffer);
   nvgl::deleteVertexArray(m_common.vao);
 
   ImGui::ShutdownGL();
@@ -430,7 +453,7 @@ void Sample::processUI(double time)
   m_uiTime = time;
 
   ImGui::NewFrame();
-  ImGui::SetNextWindowSize(ImVec2(380, 500), ImGuiCond_FirstUseEver);
+  ImGui::SetNextWindowSize(ImVec2(380, 0), ImGuiCond_FirstUseEver);
   ImGui::SetNextWindowPos(ImVec2(5, 5), ImGuiCond_FirstUseEver);
 
   if(ImGui::Begin(PROJECT_NAME, nullptr)) {
@@ -450,7 +473,7 @@ void Sample::processUI(double time)
     if(ImGui::Button("RELOAD")) {
       resetScene();
     }
-    if(m_scene.model && ImGui::CollapsingHeader("model settings", ImGuiTreeNodeFlags_DefaultOpen)) {
+    if(m_scene.model && ImGui::CollapsingHeader("render settings", ImGuiTreeNodeFlags_DefaultOpen)) {
       ImGui::Checkbox("colors", &m_tweak.colors);
       ImGui::Checkbox("bf cull", &m_tweak.cull);
       ImGui::SliderFloat("x-ray transp.", &m_tweak.transparency, 0, 1);
@@ -467,14 +490,12 @@ void Sample::processUI(double time)
       ImGui::InputInt("vertex", &m_tweak.vertex);
       ImGui::InputInt("tri", &m_tweak.tri);
       ImGui::InputInt("edge", &m_tweak.edge);
-      
-      if (m_tweak.part >= 0)
-      {
+
+      if(m_tweak.part >= 0) {
         m_tweak.part = std::min((uint32_t)m_tweak.part, ldrGetNumRegisteredParts(m_loader));
       }
 
-      if(m_tweak.part >= 0 && m_tweak.tri >= 0) 
-      {
+      if(m_tweak.part >= 0 && m_tweak.tri >= 0) {
         const LdrVertexIndex* indices = nullptr;
         if(m_scene.renderModel && m_tweak.drawRenderPart) {
           const LdrRenderPart* rpart = ldrGetRenderPart(m_loader, m_tweak.part);
@@ -493,7 +514,7 @@ void Sample::processUI(double time)
         const LdrVertexIndex* indices = nullptr;
         if(m_scene.renderModel && m_tweak.drawRenderPart) {
           const LdrRenderPart* rpart = ldrGetRenderPart(m_loader, m_tweak.part);
-          m_tweak.edge                = std::min(uint32_t(m_tweak.edge), rpart->num_lines - 1);
+          m_tweak.edge               = std::min(uint32_t(m_tweak.edge), rpart->num_lines - 1);
           indices                    = &rpart->lines[m_tweak.edge * 2];
         }
         else {
@@ -530,7 +551,7 @@ void Sample::processUI(double time)
       }
     }
 
-    if(ImGui::CollapsingHeader("load settings")) {
+    if(ImGui::CollapsingHeader("loader settings", ImGuiTreeNodeFlags_DefaultOpen)) {
       /*
         m_loaderCreateInfo.partFixMode         = LDR_PART_FIX_NONE;
         m_loaderCreateInfo.renderpartBuildMode = LDR_RENDERPART_BUILD_ONLOAD;
@@ -585,8 +606,10 @@ void Sample::think(double time)
     m_viewUbo.wLightPos       = nvmath::vec4((m_tweak.lightDir * m_control.m_sceneDimension), 1.0f);
     m_viewUbo.time            = float(time);
     m_viewUbo.opacity         = 1.0f - m_tweak.transparency;
+    m_viewUbo.useObjectColor  = m_tweak.colors ? 1 : 0;
+    m_viewUbo.inheritColor    = m_tweak.inheritColor;
 
-    glNamedBufferSubData(m_common.viewUbo, 0, sizeof(glsldata::ViewData), &m_viewUbo);
+    glNamedBufferSubData(m_common.viewBuffer, 0, sizeof(glsldata::ViewData), &m_viewUbo);
 
     glBindFramebuffer(GL_FRAMEBUFFER, fbos.scene);
     glViewport(0, 0, width, height);
@@ -658,6 +681,7 @@ void Sample::rebuildSceneBuffers()
 
   uint32_t vboOffset = 0;
   uint32_t iboOffset = 0;
+  uint32_t mtlOffset = 0;
 
   for(uint32_t i = 0; i < numParts; i++) {
     if(!activeParts[i])
@@ -667,12 +691,18 @@ void Sample::rebuildSceneBuffers()
 
     DrawPart& drawPart = m_scene.drawParts[i];
 
+    uint32_t materialIndexCount  = 0;
+    uint32_t materialIndexCountC = 0;
+
     if(!m_tweak.drawRenderPart) {
       drawPart.vertexCount    = part->num_positions;
       drawPart.triangleCount  = part->num_triangles;
       drawPart.edgesCount     = part->num_lines;
       drawPart.optionalCount  = part->num_optional_lines;
       drawPart.triangleCountC = 0;
+      if(part->materials && part->flag.hasComplexMaterial) {
+        materialIndexCount = part->num_triangles;
+      }
     }
     else {
       const LdrRenderPart* rpart = ldrGetRenderPart(m_loader, i);
@@ -682,6 +712,10 @@ void Sample::rebuildSceneBuffers()
         drawPart.edgesCount     = rpart->num_lines;
         drawPart.optionalCount  = 0;
         drawPart.triangleCountC = rpart->num_trianglesC;
+        if(rpart->materials && rpart->flag.hasComplexMaterial)
+          materialIndexCount = rpart->num_triangles;
+        if(rpart->materialsC && rpart->flag.hasComplexMaterial)
+          materialIndexCountC = rpart->num_trianglesC;
       }
       else {
         drawPart.vertexCount    = 0;
@@ -692,11 +726,16 @@ void Sample::rebuildSceneBuffers()
       }
     }
 
-    drawPart.vertexOffset   = vboOffset;
-    drawPart.triangleOffset = iboOffset;
+    drawPart.vertexOffset     = vboOffset;
+    drawPart.triangleOffset   = iboOffset;
+    drawPart.materialIDOffset = mtlOffset;
+    mtlOffset += materialIndexCount;
+    drawPart.materialIDOffsetC = mtlOffset;
+    mtlOffset += materialIndexCountC;
 
     vboOffset += drawPart.vertexCount;
     iboOffset += drawPart.triangleCount * 3;
+    mtlOffset += materialIndexCount;
 
     drawPart.edgesOffset = iboOffset;
     iboOffset += drawPart.edgesCount * 2;
@@ -709,8 +748,9 @@ void Sample::rebuildSceneBuffers()
   glFlush();
   glFinish();
 
-  nvgl::newBuffer(m_scene.vbo);
-  nvgl::newBuffer(m_scene.ibo);
+  nvgl::newBuffer(m_scene.vertexBuffer);
+  nvgl::newBuffer(m_scene.indexBuffer);
+  nvgl::newBuffer(m_scene.materialIndexBuffer);
 
   glFlush();
   glFinish();
@@ -718,43 +758,59 @@ void Sample::rebuildSceneBuffers()
   size_t vertexSize = (m_tweak.drawRenderPart ? sizeof(LdrRenderVertex) : sizeof(LdrVector));
 
   if(vboOffset)
-    glNamedBufferStorage(m_scene.vbo, vertexSize * vboOffset, nullptr, GL_DYNAMIC_STORAGE_BIT);
+    glNamedBufferStorage(m_scene.vertexBuffer, vertexSize * vboOffset, nullptr, GL_DYNAMIC_STORAGE_BIT);
   if(iboOffset)
-    glNamedBufferStorage(m_scene.ibo, sizeof(uint32_t) * iboOffset, nullptr, GL_DYNAMIC_STORAGE_BIT);
+    glNamedBufferStorage(m_scene.indexBuffer, sizeof(uint32_t) * iboOffset, nullptr, GL_DYNAMIC_STORAGE_BIT);
+  if(mtlOffset)
+    glNamedBufferStorage(m_scene.materialIndexBuffer, sizeof(uint32_t) * mtlOffset, nullptr, GL_DYNAMIC_STORAGE_BIT);
 
   for(uint32_t i = 0; i < numParts; i++) {
     if(!activeParts[i])
       continue;
 
-    const LdrPart*       part  = ldrGetPart(m_loader, i);
-    const LdrRenderPart* rpart = ldrGetRenderPart(m_loader, i);
-
     const DrawPart& drawPart = m_scene.drawParts[i];
 
     if(!m_tweak.drawRenderPart) {
-      glNamedBufferSubData(m_scene.vbo, vertexSize * drawPart.vertexOffset, vertexSize * drawPart.vertexCount, part->positions);
-      glNamedBufferSubData(m_scene.ibo, sizeof(uint32_t) * drawPart.triangleOffset,
+      const LdrPart* part = ldrGetPart(m_loader, i);
+
+      glNamedBufferSubData(m_scene.vertexBuffer, vertexSize * drawPart.vertexOffset, vertexSize * drawPart.vertexCount,
+                           part->positions);
+      glNamedBufferSubData(m_scene.indexBuffer, sizeof(uint32_t) * drawPart.triangleOffset,
                            sizeof(uint32_t) * drawPart.triangleCount * 3, part->triangles);
-      glNamedBufferSubData(m_scene.ibo, sizeof(uint32_t) * drawPart.edgesOffset,
+      glNamedBufferSubData(m_scene.indexBuffer, sizeof(uint32_t) * drawPart.edgesOffset,
                            sizeof(uint32_t) * drawPart.edgesCount * 2, part->lines);
-      glNamedBufferSubData(m_scene.ibo, sizeof(uint32_t) * drawPart.optionalOffset,
+      glNamedBufferSubData(m_scene.indexBuffer, sizeof(uint32_t) * drawPart.optionalOffset,
                            sizeof(uint32_t) * drawPart.optionalCount * 2, part->optional_lines);
+
+      if(part->materials && part->flag.hasComplexMaterial) {
+        glNamedBufferSubData(m_scene.materialIndexBuffer, sizeof(uint32_t) * drawPart.materialIDOffset,
+                             sizeof(uint32_t) * drawPart.triangleCount, part->materials);
+      }
     }
     else {
+      const LdrRenderPart* rpart = ldrGetRenderPart(m_loader, i);
+
       if(!rpart)
         continue;
 
-      const LdrVertexIndex* triangles = m_tweak.chamfered && rpart->flag.canChamfer ? rpart->trianglesC : rpart->triangles;
-      uint32_t num_triangles = m_tweak.chamfered && rpart->flag.canChamfer ? rpart->num_trianglesC : rpart->num_triangles;
-
-      glNamedBufferSubData(m_scene.vbo, vertexSize * drawPart.vertexOffset, vertexSize * drawPart.vertexCount, rpart->vertices);
-      glNamedBufferSubData(m_scene.ibo, sizeof(uint32_t) * drawPart.triangleOffset,
+      glNamedBufferSubData(m_scene.vertexBuffer, vertexSize * drawPart.vertexOffset, vertexSize * drawPart.vertexCount,
+                           rpart->vertices);
+      glNamedBufferSubData(m_scene.indexBuffer, sizeof(uint32_t) * drawPart.triangleOffset,
                            sizeof(uint32_t) * drawPart.triangleCount * 3, rpart->triangles);
-      glNamedBufferSubData(m_scene.ibo, sizeof(uint32_t) * drawPart.edgesOffset,
+      glNamedBufferSubData(m_scene.indexBuffer, sizeof(uint32_t) * drawPart.edgesOffset,
                            sizeof(uint32_t) * drawPart.edgesCount * 2, rpart->lines);
 
-      glNamedBufferSubData(m_scene.ibo, sizeof(uint32_t) * drawPart.triangleOffsetC,
+      glNamedBufferSubData(m_scene.indexBuffer, sizeof(uint32_t) * drawPart.triangleOffsetC,
                            sizeof(uint32_t) * drawPart.triangleCountC * 3, rpart->trianglesC);
+
+      if(rpart->materials && rpart->flag.hasComplexMaterial) {
+        glNamedBufferSubData(m_scene.materialIndexBuffer, sizeof(uint32_t) * drawPart.materialIDOffset,
+                             sizeof(uint32_t) * drawPart.triangleCount, rpart->materials);
+      }
+      if(rpart->materialsC && rpart->flag.hasComplexMaterial) {
+        glNamedBufferSubData(m_scene.materialIndexBuffer, sizeof(uint32_t) * drawPart.materialIDOffsetC,
+                             sizeof(uint32_t) * drawPart.triangleCountC, rpart->materialsC);
+      }
     }
   }
 }
@@ -779,8 +835,10 @@ void Sample::drawDebug()
   glEnable(GL_POLYGON_OFFSET_FILL);
   glLineStipple(2, 0xAAAA);
 
-  glBindBufferBase(GL_UNIFORM_BUFFER, UBO_SCENE, m_common.viewUbo);
-  glBindBufferBase(GL_UNIFORM_BUFFER, UBO_OBJECT, m_common.objectUbo);
+  glBindBufferBase(GL_UNIFORM_BUFFER, UBO_SCENE, m_common.viewBuffer);
+  glBindBufferBase(GL_UNIFORM_BUFFER, UBO_OBJECT, m_common.objectBuffer);
+  glBindBufferBase(GL_SHADER_STORAGE_BUFFER, SSBO_MATERIALS, m_common.materialsBuffer);
+  glBindBufferBase(GL_SHADER_STORAGE_BUFFER, SSBO_MATERIALIDS, m_scene.materialIndexBuffer);
 
   bool cullFace = true;
   bool ccw      = true;
@@ -803,8 +861,8 @@ void Sample::drawDebug()
 
   float wireColor = 0.5f;
 
-  glBindBuffer(GL_ARRAY_BUFFER, m_scene.vbo);
-  glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, m_scene.ibo);
+  glBindBuffer(GL_ARRAY_BUFFER, m_scene.vertexBuffer);
+  glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, m_scene.indexBuffer);
 
   if(!m_tweak.drawRenderPart) {
 
@@ -817,7 +875,12 @@ void Sample::drawDebug()
                           (const void*)offsetof(LdrRenderVertex, normal));
   }
 
-  glBindBuffer(GL_UNIFORM_BUFFER, m_common.objectUbo);
+  glBindBuffer(GL_UNIFORM_BUFFER, m_common.objectBuffer);
+
+  glUniform1f(UNI_COLORMUL, 1.0f);
+  glUniform1i(UNI_LIGHTING, 0);
+  glUniform1ui(UNI_MATERIALID, LDR_MATERIALID_INHERIT);
+  glUniform1ui(UNI_MATERIALIDOFFSET, ~0);
 
   LdrModelHDL model = m_scene.model;
   for(uint32_t i = 0; i < model->num_instances; i++) {
@@ -831,24 +894,13 @@ void Sample::drawDebug()
     glsldata::ObjectData obj;
     obj.color = {nvh::frand(), nvh::frand(), nvh::frand(), 1.0f};
 
-    if(m_tweak.colors) {
-      if(instance->material == LDR_MATERIALID_INHERIT) {
-        obj.color = {m_tweak.inheritColor[0], m_tweak.inheritColor[1], m_tweak.inheritColor[2], 1};
-      }
-      else {
-        const LdrMaterial* mtl = ldrGetMaterial(m_loader, instance->material);
-        if(mtl) {
-          obj.color = {float(mtl->baseColor[0]) / float(255.0f), float(mtl->baseColor[1]) / float(255.0f),
-                       float(mtl->baseColor[2]) / float(255.0f), 1};
-        }
-      }
-    }
-
     memcpy(obj.worldMatrix.mat_array, &instance->transform, sizeof(LdrMatrix));
     obj.worldMatrixIT = nvmath::transpose(nvmath::invert(obj.worldMatrix));
     float det         = nvmath::det(obj.worldMatrix);
 
     glBufferSubData(GL_UNIFORM_BUFFER, 0, sizeof(glsldata::ObjectData), &obj);
+
+    glUniform1ui(UNI_MATERIALID, instance->material);
 
     if(cullFace != !(bool(part->flag.hasNoBackFaceCulling) || !m_tweak.cull)) {
       if(cullFace) {
@@ -866,14 +918,19 @@ void Sample::drawDebug()
     }
 
     if(!m_tweak.drawRenderPart) {
-      glUniform1i(1, 0);
-      glUniform1f(0, 1.0f);
+      glUniform1i(UNI_LIGHTING, 0);
+      glUniform1f(UNI_COLORMUL, 1.0f);
 
       if(m_tweak.triangles) {
+        if(part->materials && part->flag.hasComplexMaterial)
+          glUniform1ui(UNI_MATERIALIDOFFSET, drawPart.materialIDOffset);
+
         glDrawElementsBaseVertex(GL_TRIANGLES, part->num_triangles * 3, GL_UNSIGNED_INT,
                                  (const void*)(sizeof(uint32_t) * drawPart.triangleOffset), drawPart.vertexOffset);
+        if(part->materials && part->flag.hasComplexMaterial)
+          glUniform1ui(UNI_MATERIALIDOFFSET, ~0);
       }
-      glUniform1f(0, 0.2f);
+      glUniform1f(UNI_COLORMUL, 0.2f);
       if(m_tweak.edges) {
         glLineWidth(1 * widthScale);
         glDrawElementsBaseVertex(GL_LINES, part->num_lines * 2, GL_UNSIGNED_INT,
@@ -891,7 +948,7 @@ void Sample::drawDebug()
 
       if(m_tweak.wireframe) {
         glLineWidth(1);
-        glUniform1f(0, wireColor);
+        glUniform1f(UNI_COLORMUL, wireColor);
         glLineStipple(2, 0xAAAA);
         glEnable(GL_LINE_STIPPLE);
         glPolygonMode(GL_FRONT_AND_BACK, GL_LINE);
@@ -906,15 +963,25 @@ void Sample::drawDebug()
 
       uint32_t triangles = m_tweak.chamfered && rpart->flag.canChamfer ? drawPart.triangleOffsetC : drawPart.triangleOffset;
       uint32_t num_triangles = m_tweak.chamfered && rpart->flag.canChamfer ? rpart->num_trianglesC : rpart->num_triangles;
+      const LdrMaterialID* materials = m_tweak.chamfered && rpart->flag.canChamfer ? rpart->materialsC : rpart->materials;
+      uint32_t material_offset = m_tweak.chamfered && rpart->flag.canChamfer ? drawPart.materialIDOffsetC : drawPart.materialIDOffset;
 
-      glUniform1i(1, 1);
-      glUniform1f(0, 1.0f);
+      glUniform1i(UNI_LIGHTING, 1);
+      glUniform1f(UNI_COLORMUL, 1.0f);
+
       if(m_tweak.triangles) {
+        if(materials && rpart->flag.hasComplexMaterial)
+          glUniform1ui(UNI_MATERIALIDOFFSET, material_offset);
+
         glDrawElementsBaseVertex(GL_TRIANGLES, num_triangles * 3, GL_UNSIGNED_INT,
                                  (const void*)(sizeof(uint32_t) * triangles), drawPart.vertexOffset);
+
+        if(materials && rpart->flag.hasComplexMaterial)
+          glUniform1ui(UNI_MATERIALIDOFFSET, ~0);
       }
-      glUniform1f(0, 0.2f);
-      glUniform1i(1, 0);
+
+      glUniform1f(UNI_COLORMUL, 0.2f);
+      glUniform1i(UNI_LIGHTING, 0);
       if(m_tweak.edges) {
         glLineWidth(1 * widthScale);
         glDrawElementsBaseVertex(GL_LINES, rpart->num_lines * 2, GL_UNSIGNED_INT,
@@ -923,7 +990,7 @@ void Sample::drawDebug()
 
       if(m_tweak.wireframe) {
         glLineWidth(1);
-        glUniform1f(0, wireColor);
+        glUniform1f(UNI_COLORMUL, wireColor);
         glEnable(GL_LINE_STIPPLE);
         glPolygonMode(GL_FRONT_AND_BACK, GL_LINE);
         glDrawElementsBaseVertex(GL_TRIANGLES, num_triangles * 3, GL_UNSIGNED_INT,
@@ -935,11 +1002,11 @@ void Sample::drawDebug()
 
     if(instance->part == m_tweak.part) {
       if(m_tweak.vertex >= 0) {
-        glUniform1f(0, 2.0f);
+        glUniform1f(UNI_COLORMUL, 2.0f);
         glDrawArrays(GL_POINTS, m_tweak.vertex + drawPart.vertexOffset, 1);
       }
       if(m_tweak.tri >= 0) {
-        glUniform1f(0, 1.7f);
+        glUniform1f(UNI_COLORMUL, 1.7f);
         glLineWidth(3 * widthScale);
         glEnable(GL_LINE_STIPPLE);
         glLineStipple(3, 0xAAAA);
@@ -949,7 +1016,7 @@ void Sample::drawDebug()
         glDisable(GL_LINE_STIPPLE);
       }
       if(m_tweak.edge >= 0) {
-        glUniform1f(0, 2.0f);
+        glUniform1f(UNI_COLORMUL, 2.0f);
         glLineWidth(2 * widthScale);
         glDrawElementsBaseVertex(GL_LINES, 2, GL_UNSIGNED_INT,
                                  (const void*)(sizeof(uint32_t) * (drawPart.edgesOffset + (m_tweak.edge * 2))),
@@ -961,8 +1028,10 @@ void Sample::drawDebug()
   glDisableVertexAttribArray(VERTEX_POS);
   glDisableVertexAttribArray(VERTEX_NORMAL);
 
-  glBindBufferBase(GL_UNIFORM_BUFFER, UBO_SCENE, 0);
   glBindBufferBase(GL_UNIFORM_BUFFER, UBO_OBJECT, 0);
+  glBindBufferBase(GL_UNIFORM_BUFFER, UBO_SCENE, 0);
+  glBindBufferBase(GL_SHADER_STORAGE_BUFFER, SSBO_MATERIALIDS, 0);
+  glBindBufferBase(GL_SHADER_STORAGE_BUFFER, SSBO_MATERIALS, 0);
   glBindBuffer(GL_ARRAY_BUFFER, 0);
   glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, 0);
 
