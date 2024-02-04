@@ -762,7 +762,7 @@ void Sample::rebuildSceneBuffers()
   if(iboOffset)
     glNamedBufferStorage(m_scene.indexBuffer, sizeof(uint32_t) * iboOffset, nullptr, GL_DYNAMIC_STORAGE_BIT);
   if(mtlOffset)
-    glNamedBufferStorage(m_scene.materialIndexBuffer, sizeof(uint32_t) * mtlOffset, nullptr, GL_DYNAMIC_STORAGE_BIT);
+    glNamedBufferStorage(m_scene.materialIndexBuffer, sizeof(LdrMaterialID) * mtlOffset, nullptr, GL_DYNAMIC_STORAGE_BIT);
 
   for(uint32_t i = 0; i < numParts; i++) {
     if(!activeParts[i])
@@ -783,8 +783,8 @@ void Sample::rebuildSceneBuffers()
                            sizeof(uint32_t) * drawPart.optionalCount * 2, part->optional_lines);
 
       if(part->materials && part->flag.hasComplexMaterial) {
-        glNamedBufferSubData(m_scene.materialIndexBuffer, sizeof(uint32_t) * drawPart.materialIDOffset,
-                             sizeof(uint32_t) * drawPart.triangleCount, part->materials);
+        glNamedBufferSubData(m_scene.materialIndexBuffer, sizeof(LdrMaterialID) * drawPart.materialIDOffset,
+                             sizeof(LdrMaterialID) * drawPart.triangleCount, part->materials);
       }
     }
     else {
@@ -804,12 +804,12 @@ void Sample::rebuildSceneBuffers()
                            sizeof(uint32_t) * drawPart.triangleCountC * 3, rpart->trianglesC);
 
       if(rpart->materials && rpart->flag.hasComplexMaterial) {
-        glNamedBufferSubData(m_scene.materialIndexBuffer, sizeof(uint32_t) * drawPart.materialIDOffset,
-                             sizeof(uint32_t) * drawPart.triangleCount, rpart->materials);
+        glNamedBufferSubData(m_scene.materialIndexBuffer, sizeof(LdrMaterialID) * drawPart.materialIDOffset,
+                             sizeof(LdrMaterialID) * drawPart.triangleCount, rpart->materials);
       }
       if(rpart->materialsC && rpart->flag.hasComplexMaterial) {
-        glNamedBufferSubData(m_scene.materialIndexBuffer, sizeof(uint32_t) * drawPart.materialIDOffsetC,
-                             sizeof(uint32_t) * drawPart.triangleCountC, rpart->materialsC);
+        glNamedBufferSubData(m_scene.materialIndexBuffer, sizeof(LdrMaterialID) * drawPart.materialIDOffsetC,
+                             sizeof(LdrMaterialID) * drawPart.triangleCountC, rpart->materialsC);
       }
     }
   }
