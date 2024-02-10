@@ -128,6 +128,7 @@ class Sample : public nvgl::AppWindowProfilerGL
     int          tri            = -1;
     int          vertex         = -1;
     int          edge           = -1;
+    bool         threadedLoad   = false;
   };
 
   nvgl::ProgramManager m_progManager;
@@ -138,7 +139,6 @@ class Sample : public nvgl::AppWindowProfilerGL
   Tweak m_tweak;
   Tweak m_tweakLast;
 
-  bool m_threadedLoad = false;
   bool m_renderModel  = false;
 
   LdrLoaderCreateInfo m_loaderCreateInfo;
@@ -202,7 +202,7 @@ public:
 
     m_parameterList.addFilename(".ldr", &m_modelFilename);
     m_parameterList.addFilename(".mpd", &m_modelFilename);
-    m_parameterList.add("threadedload", &m_threadedLoad);
+    m_parameterList.add("threadedload", &m_tweak.threadedLoad);
     m_parameterList.add("renderpartbuild", (int*)&m_loaderCreateInfo.renderpartBuildMode);
     m_parameterList.add("ldrawpath", &m_ldrawPath);
 
@@ -259,7 +259,7 @@ bool Sample::initScene()
   timeLoadAll = -m_profiler.getMicroSeconds();
 
   LdrResult result;
-  if(m_threadedLoad) {
+  if(m_tweak.threadedLoad) {
     time   = -m_profiler.getMicroSeconds();
     result = ldrCreateModel(m_loader, m_modelFilename.c_str(), LDR_FALSE, &m_scene.model);
     assert(result == LDR_SUCCESS || result == LDR_WARNING_PART_NOT_FOUND);
@@ -308,7 +308,7 @@ bool Sample::initScene()
     time += m_profiler.getMicroSeconds();
     printf("load time %.2f ms\n", time / 1000.0f);
 
-    if(result != LDR_SUCCESS)
+    if(!(result == LDR_SUCCESS || result == LDR_WARNING_PART_NOT_FOUND))
       return false;
   }
 
@@ -331,7 +331,7 @@ bool Sample::initScene()
 
   printf("build time %.2f ms\n", time / 1000.0f);
 
-  return result == LDR_SUCCESS;
+  return (result == LDR_SUCCESS || result == LDR_WARNING_PART_NOT_FOUND);
 }
 
 
@@ -621,7 +621,7 @@ void Sample::think(double time)
   }
 
   bool doRebuild = false;
-  if(memcmp(&m_loaderCreateInfoLast, &m_loaderCreateInfo, sizeof(m_loaderCreateInfo)) != 0) {
+  if(memcmp(&m_loaderCreateInfoLast, &m_loaderCreateInfo, sizeof(m_loaderCreateInfo)) != 0 || tweakChanged(m_tweak.threadedLoad)) {
     deinitScene();
     resetLoader();
     initScene();

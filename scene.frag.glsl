@@ -56,6 +56,10 @@ void main()
     if (usedMaterialID == 16) {
       objColor = view.inheritColor;
     }
+    else if (usedMaterialID >= 0x2000000)
+    {
+      objColor = vec4(unpackUnorm4x8(usedMaterialID).zyx,1.0);
+    }
     else {
       objColor = materials[usedMaterialID].color;
     }
