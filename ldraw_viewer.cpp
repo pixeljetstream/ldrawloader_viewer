@@ -124,6 +124,7 @@ class Sample : public nvgl::AppWindowProfilerGL
     bool         optional       = false;
     bool         colors         = true;
     float        transparency   = 0;
+    int          instance       = -1;
     int          part           = -1;
     int          tri            = -1;
     int          vertex         = -1;
@@ -139,7 +140,7 @@ class Sample : public nvgl::AppWindowProfilerGL
   Tweak m_tweak;
   Tweak m_tweakLast;
 
-  bool m_renderModel  = false;
+  bool m_renderModel = false;
 
   LdrLoaderCreateInfo m_loaderCreateInfo;
   LdrLoaderCreateInfo m_loaderCreateInfoLast;
@@ -204,6 +205,10 @@ public:
     m_parameterList.addFilename(".mpd", &m_modelFilename);
     m_parameterList.add("threadedload", &m_tweak.threadedLoad);
     m_parameterList.add("renderpartbuild", (int*)&m_loaderCreateInfo.renderpartBuildMode);
+    m_parameterList.add("renderpartchamfer", &m_loaderCreateInfo.renderpartChamfer);
+    m_parameterList.add("partfix", (int*)&m_loaderCreateInfo.partFixMode);
+    m_parameterList.add("partfixtj", (int*)&m_loaderCreateInfo.partFixTjunctions);
+    
     m_parameterList.add("ldrawpath", &m_ldrawPath);
 
     const char* ldrawPath = getenv("LDRAWDIR");
@@ -266,7 +271,7 @@ bool Sample::initScene()
     time += m_profiler.getMicroSeconds();
     printf("dependency time %.2f ms\n", time / 1000.0f);
 
-    if(result != LDR_SUCCESS)
+    if(!(result == LDR_SUCCESS || result == LDR_WARNING_PART_NOT_FOUND))
       return false;
 
     // threaded loaded
@@ -277,6 +282,7 @@ bool Sample::initScene()
     uint32_t perThread  = (numParts + numThreads - 1) / numThreads;
 
     std::vector<LdrPartID> partIds(numParts);
+    std::vector<LdrResult> errors(numThreads);
 
     std::vector<std::thread> threads(numThreads);
     for(uint32_t i = 0; i < numThreads; i++) {
@@ -288,13 +294,18 @@ bool Sample::initScene()
               for(uint32_t p = 0; p < numLocal; p++) {
                 partIds[offset + p] = (LdrPartID)(offset + p);
               }
-              ldrLoadDeferredParts(m_loader, numLocal, &partIds[offset], sizeof(LdrPartID));
+              errors[idx] = ldrLoadDeferredParts(m_loader, numLocal, &partIds[offset], sizeof(LdrPartID));
             }
           },
           i);
     }
     for(uint32_t i = 0; i < numThreads; i++) {
       threads[i].join();
+      if(!(errors[i] == LDR_SUCCESS || errors[i] == LDR_WARNING_PART_NOT_FOUND))
+      {
+        assert(0);
+        return false;
+      }
     }
     ldrResolveModel(m_loader, m_scene.model);
 
@@ -486,13 +497,28 @@ void Sample::processUI(double time)
         ImGui::Checkbox("draw render part", &m_tweak.drawRenderPart);
         ImGui::Checkbox("draw render part chamfer", &m_tweak.chamfered);
       }
+      ImGui::InputInt("instance", &m_tweak.instance);
       ImGui::InputInt("part", &m_tweak.part);
       ImGui::InputInt("vertex", &m_tweak.vertex);
       ImGui::InputInt("tri", &m_tweak.tri);
       ImGui::InputInt("edge", &m_tweak.edge);
 
+      m_tweak.instance = std::max(-1, m_tweak.instance);
+      m_tweak.part     = std::max(-1, m_tweak.part);
+      m_tweak.vertex   = std::max(-1, m_tweak.vertex);
+      m_tweak.tri      = std::max(-1, m_tweak.tri);
+      m_tweak.edge     = std::max(-1, m_tweak.edge);
+
+      if(m_tweak.instance >= 0) {
+        m_tweak.instance = std::min((uint32_t)m_tweak.instance, m_scene.model->num_instances - 1);
+        m_tweak.part     = m_scene.model->instances[m_tweak.instance].part;
+      }
+      else if(m_tweakLast.instance >= 0) {
+        m_tweak.part = -1;
+      }
+
       if(m_tweak.part >= 0) {
-        m_tweak.part = std::min((uint32_t)m_tweak.part, ldrGetNumRegisteredParts(m_loader));
+        m_tweak.part = std::min((uint32_t)m_tweak.part, ldrGetNumRegisteredParts(m_loader) - 1);
       }
 
       if(m_tweak.part >= 0 && m_tweak.tri >= 0) {
@@ -547,6 +573,11 @@ void Sample::processUI(double time)
         const LdrPart* part = ldrGetPart(m_loader, m_tweak.part);
         if(part) {
           ImGui::Text("%s\n", part->name);
+          ImGui::Text("  instances %6d\n", part->num_instances);
+          ImGui::Text("  points    %6d\n", part->num_positions);
+          ImGui::Text("  tris      %6d\n", part->num_triangles);
+          ImGui::Text("  lines     %6d\n", part->num_lines);
+          ImGui::Text("  olines    %6d\n", part->num_optional_lines);
         }
       }
     }
@@ -676,7 +707,8 @@ void Sample::rebuildSceneBuffers()
 
   for(uint32_t i = 0; i < model->num_instances; i++) {
     const LdrInstance* instance = &model->instances[i];
-    activeParts[instance->part] = true;
+    if(instance->part != LDR_INVALID_ID)
+      activeParts[instance->part] = true;
   }
 
   uint32_t vboOffset = 0;
@@ -757,12 +789,18 @@ void Sample::rebuildSceneBuffers()
 
   size_t vertexSize = (m_tweak.drawRenderPart ? sizeof(LdrRenderVertex) : sizeof(LdrVector));
 
-  if(vboOffset)
+  if(vboOffset) {
+    printf("vbo size: %9d - %9d KB\n", vboOffset, (uint32_t)(vertexSize * vboOffset + 1023) & ~1023);
     glNamedBufferStorage(m_scene.vertexBuffer, vertexSize * vboOffset, nullptr, GL_DYNAMIC_STORAGE_BIT);
-  if(iboOffset)
+  }
+  if(iboOffset) {
+    printf("ibo size: %9d - %9d KB\n", iboOffset, (uint32_t)(sizeof(uint32_t) * iboOffset + 1023) & ~1023);
     glNamedBufferStorage(m_scene.indexBuffer, sizeof(uint32_t) * iboOffset, nullptr, GL_DYNAMIC_STORAGE_BIT);
-  if(mtlOffset)
+  }
+  if(mtlOffset) {
+    printf("mtl size: %9d - %9d KB\n", mtlOffset, (uint32_t)(sizeof(LdrMaterialID) * mtlOffset + 1023) & ~1023);
     glNamedBufferStorage(m_scene.materialIndexBuffer, sizeof(LdrMaterialID) * mtlOffset, nullptr, GL_DYNAMIC_STORAGE_BIT);
+  }
 
   for(uint32_t i = 0; i < numParts; i++) {
     if(!activeParts[i])
@@ -884,11 +922,15 @@ void Sample::drawDebug()
 
   LdrModelHDL model = m_scene.model;
   for(uint32_t i = 0; i < model->num_instances; i++) {
-    const LdrInstance* instance = &model->instances[i];
-    const LdrPart*     part     = ldrGetPart(m_loader, instance->part);
-    const DrawPart&    drawPart = m_scene.drawParts[instance->part];
+    const LdrInstance*   instance = &model->instances[i];
+    const LdrPart*       part     = ldrGetPart(m_loader, instance->part);
+    const LdrRenderPart* rpart    = ldrGetRenderPart(m_loader, instance->part);
+    const DrawPart&      drawPart = m_scene.drawParts[instance->part];
 
-    if(m_tweak.part >= 0 && instance->part != m_tweak.part)
+    if(m_tweak.instance >= 0 && i != (uint32_t)m_tweak.instance)
+      continue;
+
+    if(!part || m_tweak.part >= 0 && instance->part != m_tweak.part)
       continue;
 
     glsldata::ObjectData obj;
@@ -958,8 +1000,7 @@ void Sample::drawDebug()
         glPolygonMode(GL_FRONT_AND_BACK, GL_FILL);
       }
     }
-    else {
-      const LdrRenderPart* rpart = ldrGetRenderPart(m_loader, instance->part);
+    else if(rpart) {
 
       uint32_t triangles = m_tweak.chamfered && rpart->flag.canChamfer ? drawPart.triangleOffsetC : drawPart.triangleOffset;
       uint32_t num_triangles = m_tweak.chamfered && rpart->flag.canChamfer ? rpart->num_trianglesC : rpart->num_triangles;

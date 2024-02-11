@@ -60,6 +60,7 @@ if(WIN32 AND NOT GLUT_FOUND)
 endif()
 
 add_executable(${PROJNAME} ${LDRAWMODEL_FILES} ${SOURCE_FILES} ${COMMON_SOURCE_FILES} ${PACKAGE_SOURCE_FILES} ${GLSL_FILES})
+set_property(TARGET ${PROJNAME} PROPERTY CXX_STANDARD 17)
 
 #####################################################################################
 # common source code needed for this sample
