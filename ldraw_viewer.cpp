@@ -208,7 +208,7 @@ public:
     m_parameterList.add("renderpartchamfer", &m_loaderCreateInfo.renderpartChamfer);
     m_parameterList.add("partfix", (int*)&m_loaderCreateInfo.partFixMode);
     m_parameterList.add("partfixtj", (int*)&m_loaderCreateInfo.partFixTjunctions);
-    
+
     m_parameterList.add("ldrawpath", &m_ldrawPath);
 
     const char* ldrawPath = getenv("LDRAWDIR");
@@ -301,8 +301,7 @@ bool Sample::initScene()
     }
     for(uint32_t i = 0; i < numThreads; i++) {
       threads[i].join();
-      if(!(errors[i] == LDR_SUCCESS || errors[i] == LDR_WARNING_PART_NOT_FOUND))
-      {
+      if(!(errors[i] == LDR_SUCCESS || errors[i] == LDR_WARNING_PART_NOT_FOUND)) {
         assert(0);
         return false;
       }
@@ -555,11 +554,12 @@ void Sample::processUI(double time)
         const LdrPart* part = ldrGetPart(m_loader, m_tweak.part);
 
         const float* pos = nullptr;
+        const float* nrm = nullptr;
         if(m_scene.renderModel && m_tweak.drawRenderPart) {
-
           const LdrRenderPart* rpart = ldrGetRenderPart(m_loader, m_tweak.part);
           m_tweak.vertex             = std::min(uint32_t(m_tweak.vertex), rpart->num_vertices - 1);
           pos                        = &rpart->vertices[m_tweak.vertex].position.x;
+          nrm                        = &rpart->vertices[m_tweak.vertex].normal.x;
         }
         else {
           const LdrPart* part = ldrGetPart(m_loader, m_tweak.part);
@@ -567,12 +567,28 @@ void Sample::processUI(double time)
           pos                 = &part->positions[m_tweak.vertex].x;
         }
         ImGui::Text("vert: %.3f %.3f %.3f\n", pos[0], pos[1], pos[2]);
+        if(nrm) {
+          ImGui::Text("norm: %.3f %.3f %.3f\n", nrm[0], nrm[1], nrm[2]);
+        }
+        else {
+          ImGui::Text("norm: -\n");
+        }
       }
 
       if(m_tweak.part >= 0) {
         const LdrPart* part = ldrGetPart(m_loader, m_tweak.part);
         if(part) {
           ImGui::Text("%s\n", part->name);
+        }
+        if(m_scene.renderModel && m_tweak.drawRenderPart) {
+          const LdrRenderPart* rpart = ldrGetRenderPart(m_loader, m_tweak.part);
+          ImGui::Text("  instances %6d\n", 0);
+          ImGui::Text("  points    %6d\n", rpart->num_vertices);
+          ImGui::Text("  tris      %6d\n", rpart->num_triangles);
+          ImGui::Text("  lines     %6d\n", rpart->num_lines);
+          ImGui::Text("  olines    %6d\n", 0);
+        }
+        else {
           ImGui::Text("  instances %6d\n", part->num_instances);
           ImGui::Text("  points    %6d\n", part->num_positions);
           ImGui::Text("  tris      %6d\n", part->num_triangles);
