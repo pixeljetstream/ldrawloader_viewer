@@ -208,6 +208,8 @@ public:
     m_parameterList.add("renderpartchamfer", &m_loaderCreateInfo.renderpartChamfer);
     m_parameterList.add("partfix", (int*)&m_loaderCreateInfo.partFixMode);
     m_parameterList.add("partfixtj", (int*)&m_loaderCreateInfo.partFixTjunctions);
+    m_parameterList.add("drawrenderpart", &m_tweak.drawRenderPart);
+    m_parameterList.add("chamfered", &m_tweak.chamfered);
 
     m_parameterList.add("ldrawpath", &m_ldrawPath);
 
@@ -524,30 +526,44 @@ void Sample::processUI(double time)
         const LdrVertexIndex* indices = nullptr;
         if(m_scene.renderModel && m_tweak.drawRenderPart) {
           const LdrRenderPart* rpart = ldrGetRenderPart(m_loader, m_tweak.part);
-          m_tweak.tri                = std::min(uint32_t(m_tweak.tri), rpart->num_triangles - 1);
-          indices                    = &rpart->triangles[m_tweak.tri * 3];
+          if(rpart) {
+            m_tweak.tri = std::min(uint32_t(m_tweak.tri), rpart->num_triangles - 1);
+            indices     = &rpart->triangles[m_tweak.tri * 3];
+          }
         }
         else {
           const LdrPart* part = ldrGetPart(m_loader, m_tweak.part);
           m_tweak.tri         = std::min(uint32_t(m_tweak.tri), part->num_triangles - 1);
           indices             = &part->triangles[m_tweak.tri * 3];
         }
-        ImGui::Text("tri: %d %d %d\n", indices[0], indices[1], indices[2]);
+        if(indices) {
+          ImGui::Text("tri: %d %d %d\n", indices[0], indices[1], indices[2]);
+        }
+        else {
+          ImGui::Text("tri: -\n");
+        }
       }
 
       if(m_tweak.part >= 0 && m_tweak.edge >= 0) {
         const LdrVertexIndex* indices = nullptr;
         if(m_scene.renderModel && m_tweak.drawRenderPart) {
           const LdrRenderPart* rpart = ldrGetRenderPart(m_loader, m_tweak.part);
-          m_tweak.edge               = std::min(uint32_t(m_tweak.edge), rpart->num_lines - 1);
-          indices                    = &rpart->lines[m_tweak.edge * 2];
+          if(rpart) {
+            m_tweak.edge = std::min(uint32_t(m_tweak.edge), rpart->num_lines - 1);
+            indices      = &rpart->lines[m_tweak.edge * 2];
+          }
         }
         else {
           const LdrPart* part = ldrGetPart(m_loader, m_tweak.part);
           m_tweak.edge        = std::min(uint32_t(m_tweak.edge), part->num_lines - 1);
           indices             = &part->lines[m_tweak.edge * 2];
         }
-        ImGui::Text("line: %d %d\n", indices[0], indices[1]);
+        if(indices) {
+          ImGui::Text("line: %d %d\n", indices[0], indices[1]);
+        }
+        else {
+          ImGui::Text("line: -\n");
+        }
       }
 
       if(m_tweak.vertex >= 0 && m_tweak.part >= 0) {
@@ -557,16 +573,23 @@ void Sample::processUI(double time)
         const float* nrm = nullptr;
         if(m_scene.renderModel && m_tweak.drawRenderPart) {
           const LdrRenderPart* rpart = ldrGetRenderPart(m_loader, m_tweak.part);
-          m_tweak.vertex             = std::min(uint32_t(m_tweak.vertex), rpart->num_vertices - 1);
-          pos                        = &rpart->vertices[m_tweak.vertex].position.x;
-          nrm                        = &rpart->vertices[m_tweak.vertex].normal.x;
+          if(rpart) {
+            m_tweak.vertex = std::min(uint32_t(m_tweak.vertex), rpart->num_vertices - 1);
+            pos            = &rpart->vertices[m_tweak.vertex].position.x;
+            nrm            = &rpart->vertices[m_tweak.vertex].normal.x;
+          }
         }
         else {
           const LdrPart* part = ldrGetPart(m_loader, m_tweak.part);
           m_tweak.vertex      = std::min(uint32_t(m_tweak.vertex), part->num_positions - 1);
           pos                 = &part->positions[m_tweak.vertex].x;
         }
-        ImGui::Text("vert: %.3f %.3f %.3f\n", pos[0], pos[1], pos[2]);
+        if(pos) {
+          ImGui::Text("vert: %.3f %.3f %.3f\n", pos[0], pos[1], pos[2]);
+        }
+        else {
+          ImGui::Text("pos: -\n");
+        }
         if(nrm) {
           ImGui::Text("norm: %.3f %.3f %.3f\n", nrm[0], nrm[1], nrm[2]);
         }
@@ -579,21 +602,23 @@ void Sample::processUI(double time)
         const LdrPart* part = ldrGetPart(m_loader, m_tweak.part);
         if(part) {
           ImGui::Text("%s\n", part->name);
-        }
-        if(m_scene.renderModel && m_tweak.drawRenderPart) {
-          const LdrRenderPart* rpart = ldrGetRenderPart(m_loader, m_tweak.part);
-          ImGui::Text("  instances %6d\n", 0);
-          ImGui::Text("  points    %6d\n", rpart->num_vertices);
-          ImGui::Text("  tris      %6d\n", rpart->num_triangles);
-          ImGui::Text("  lines     %6d\n", rpart->num_lines);
-          ImGui::Text("  olines    %6d\n", 0);
-        }
-        else {
-          ImGui::Text("  instances %6d\n", part->num_instances);
-          ImGui::Text("  points    %6d\n", part->num_positions);
-          ImGui::Text("  tris      %6d\n", part->num_triangles);
-          ImGui::Text("  lines     %6d\n", part->num_lines);
-          ImGui::Text("  olines    %6d\n", part->num_optional_lines);
+          if(m_scene.renderModel && m_tweak.drawRenderPart) {
+            const LdrRenderPart* rpart = ldrGetRenderPart(m_loader, m_tweak.part);
+            if(rpart) {
+              ImGui::Text("  instances %6d\n", 0);
+              ImGui::Text("  points    %6d\n", rpart->num_vertices);
+              ImGui::Text("  tris      %6d\n", rpart->num_triangles);
+              ImGui::Text("  lines     %6d\n", rpart->num_lines);
+              ImGui::Text("  olines    %6d\n", 0);
+            }
+          }
+          else {
+            ImGui::Text("  instances %6d\n", part->num_instances);
+            ImGui::Text("  points    %6d\n", part->num_positions);
+            ImGui::Text("  tris      %6d\n", part->num_triangles);
+            ImGui::Text("  lines     %6d\n", part->num_lines);
+            ImGui::Text("  olines    %6d\n", part->num_optional_lines);
+          }
         }
       }
     }
