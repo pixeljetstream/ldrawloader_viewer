@@ -385,19 +385,19 @@ bool Sample::resetLoader()
 
   if(m_loader)
   {
-    std::vector<glsldata::MaterialData> materials;
+    std::vector<glsldata::MaterialData> triangleMaterials;
     uint32_t                            numMaterials = ldrGetNumRegisteredMaterials(m_loader);
-    materials.resize(numMaterials);
+    triangleMaterials.resize(numMaterials);
 
     for(uint32_t m = 0; m < numMaterials; m++)
     {
       const LdrMaterial* mtl = ldrGetMaterial(m_loader, m);
-      materials[m].color     = {float(mtl->baseColor[0]) / float(255.0f), float(mtl->baseColor[1]) / float(255.0f),
+      triangleMaterials[m].color     = {float(mtl->baseColor[0]) / float(255.0f), float(mtl->baseColor[1]) / float(255.0f),
                                 float(mtl->baseColor[2]) / float(255.0f), 1};
     }
 
     nvgl::newBuffer(m_common.materialsBuffer);
-    glNamedBufferStorage(m_common.materialsBuffer, sizeof(glsldata::MaterialData) * materials.size(), materials.data(), 0);
+    glNamedBufferStorage(m_common.materialsBuffer, sizeof(glsldata::MaterialData) * triangleMaterials.size(), triangleMaterials.data(), 0);
   }
 
 
@@ -532,7 +532,7 @@ void Sample::processUI(double time)
 
       if(m_tweak.instance >= 0)
       {
-        m_tweak.instance = std::min((uint32_t)m_tweak.instance, m_scene.model->num_instances - 1);
+        m_tweak.instance = std::min((uint32_t)m_tweak.instance, m_scene.model->numInstances - 1);
         m_tweak.part     = m_scene.model->instances[m_tweak.instance].part;
       }
       else if(m_tweakLast.instance >= 0)
@@ -553,14 +553,14 @@ void Sample::processUI(double time)
           const LdrRenderPart* rpart = ldrGetRenderPart(m_loader, m_tweak.part);
           if(rpart)
           {
-            m_tweak.tri = std::min(uint32_t(m_tweak.tri), rpart->num_triangles - 1);
+            m_tweak.tri = std::min(uint32_t(m_tweak.tri), rpart->numTriangles - 1);
             indices     = &rpart->triangles[m_tweak.tri * 3];
           }
         }
         else
         {
           const LdrPart* part = ldrGetPart(m_loader, m_tweak.part);
-          m_tweak.tri         = std::min(uint32_t(m_tweak.tri), part->num_triangles - 1);
+          m_tweak.tri         = std::min(uint32_t(m_tweak.tri), part->numTriangles - 1);
           indices             = &part->triangles[m_tweak.tri * 3];
         }
         if(indices)
@@ -581,14 +581,14 @@ void Sample::processUI(double time)
           const LdrRenderPart* rpart = ldrGetRenderPart(m_loader, m_tweak.part);
           if(rpart)
           {
-            m_tweak.edge = std::min(uint32_t(m_tweak.edge), rpart->num_lines - 1);
+            m_tweak.edge = std::min(uint32_t(m_tweak.edge), rpart->numLines - 1);
             indices      = &rpart->lines[m_tweak.edge * 2];
           }
         }
         else
         {
           const LdrPart* part = ldrGetPart(m_loader, m_tweak.part);
-          m_tweak.edge        = std::min(uint32_t(m_tweak.edge), part->num_lines - 1);
+          m_tweak.edge        = std::min(uint32_t(m_tweak.edge), part->numLines - 1);
           indices             = &part->lines[m_tweak.edge * 2];
         }
         if(indices)
@@ -612,7 +612,7 @@ void Sample::processUI(double time)
           const LdrRenderPart* rpart = ldrGetRenderPart(m_loader, m_tweak.part);
           if(rpart)
           {
-            m_tweak.vertex = std::min(uint32_t(m_tweak.vertex), rpart->num_vertices - 1);
+            m_tweak.vertex = std::min(uint32_t(m_tweak.vertex), rpart->numVertices - 1);
             pos            = &rpart->vertices[m_tweak.vertex].position.x;
             nrm            = &rpart->vertices[m_tweak.vertex].normal.x;
           }
@@ -620,7 +620,7 @@ void Sample::processUI(double time)
         else
         {
           const LdrPart* part = ldrGetPart(m_loader, m_tweak.part);
-          m_tweak.vertex      = std::min(uint32_t(m_tweak.vertex), part->num_positions - 1);
+          m_tweak.vertex      = std::min(uint32_t(m_tweak.vertex), part->numPositions - 1);
           pos                 = &part->positions[m_tweak.vertex].x;
         }
         if(pos)
@@ -653,19 +653,19 @@ void Sample::processUI(double time)
             if(rpart)
             {
               ImGui::Text("  instances %6d\n", 0);
-              ImGui::Text("  points    %6d\n", rpart->num_vertices);
-              ImGui::Text("  tris      %6d\n", rpart->num_triangles);
-              ImGui::Text("  lines     %6d\n", rpart->num_lines);
+              ImGui::Text("  points    %6d\n", rpart->numVertices);
+              ImGui::Text("  tris      %6d\n", rpart->numTriangles);
+              ImGui::Text("  lines     %6d\n", rpart->numLines);
               ImGui::Text("  olines    %6d\n", 0);
             }
           }
           else
           {
-            ImGui::Text("  instances %6d\n", part->num_instances);
-            ImGui::Text("  points    %6d\n", part->num_positions);
-            ImGui::Text("  tris      %6d\n", part->num_triangles);
-            ImGui::Text("  lines     %6d\n", part->num_lines);
-            ImGui::Text("  olines    %6d\n", part->num_optional_lines);
+            ImGui::Text("  instances %6d\n", part->numInstances);
+            ImGui::Text("  points    %6d\n", part->numPositions);
+            ImGui::Text("  tris      %6d\n", part->numTriangles);
+            ImGui::Text("  lines     %6d\n", part->numLines);
+            ImGui::Text("  olines    %6d\n", part->numOptionalLines);
           }
         }
       }
@@ -800,7 +800,7 @@ void Sample::rebuildSceneBuffers()
 
   std::vector<bool> activeParts(numParts, false);
 
-  for(uint32_t i = 0; i < model->num_instances; i++)
+  for(uint32_t i = 0; i < model->numInstances; i++)
   {
     const LdrInstance* instance = &model->instances[i];
     if(instance->part != LDR_INVALID_ID)
@@ -825,14 +825,14 @@ void Sample::rebuildSceneBuffers()
 
     if(!m_tweak.drawRenderPart)
     {
-      drawPart.vertexCount    = part->num_positions;
-      drawPart.triangleCount  = part->num_triangles;
-      drawPart.edgesCount     = part->num_lines;
-      drawPart.optionalCount  = part->num_optional_lines;
+      drawPart.vertexCount    = part->numPositions;
+      drawPart.triangleCount  = part->numTriangles;
+      drawPart.edgesCount     = part->numLines;
+      drawPart.optionalCount  = part->numOptionalLines;
       drawPart.triangleCountC = 0;
-      if(part->materials && part->flag.hasComplexMaterial)
+      if(part->triangleMaterials && part->flag.hasComplexMaterial)
       {
-        materialIndexCount = part->num_triangles;
+        materialIndexCount = part->numTriangles;
       }
     }
     else
@@ -840,15 +840,15 @@ void Sample::rebuildSceneBuffers()
       const LdrRenderPart* rpart = ldrGetRenderPart(m_loader, i);
       if(rpart)
       {
-        drawPart.vertexCount    = rpart->num_vertices;
-        drawPart.triangleCount  = rpart->num_triangles;
-        drawPart.edgesCount     = rpart->num_lines;
+        drawPart.vertexCount    = rpart->numVertices;
+        drawPart.triangleCount  = rpart->numTriangles;
+        drawPart.edgesCount     = rpart->numLines;
         drawPart.optionalCount  = 0;
-        drawPart.triangleCountC = rpart->num_trianglesC;
-        if(rpart->materials && rpart->flag.hasComplexMaterial)
-          materialIndexCount = rpart->num_triangles;
+        drawPart.triangleCountC = rpart->numTrianglesC;
+        if(rpart->triangleMaterials && rpart->flag.hasComplexMaterial)
+          materialIndexCount = rpart->numTriangles;
         if(rpart->materialsC && rpart->flag.hasComplexMaterial)
-          materialIndexCountC = rpart->num_trianglesC;
+          materialIndexCountC = rpart->numTrianglesC;
       }
       else
       {
@@ -927,10 +927,10 @@ void Sample::rebuildSceneBuffers()
       glNamedBufferSubData(m_scene.indexBuffer, sizeof(uint32_t) * drawPart.optionalOffset,
                            sizeof(uint32_t) * drawPart.optionalCount * 2, part->optional_lines);
 
-      if(part->materials && part->flag.hasComplexMaterial)
+      if(part->triangleMaterials && part->flag.hasComplexMaterial)
       {
         glNamedBufferSubData(m_scene.materialIndexBuffer, sizeof(LdrMaterialID) * drawPart.materialIDOffset,
-                             sizeof(LdrMaterialID) * drawPart.triangleCount, part->materials);
+                             sizeof(LdrMaterialID) * drawPart.triangleCount, part->triangleMaterials);
       }
     }
     else
@@ -950,10 +950,10 @@ void Sample::rebuildSceneBuffers()
       glNamedBufferSubData(m_scene.indexBuffer, sizeof(uint32_t) * drawPart.triangleOffsetC,
                            sizeof(uint32_t) * drawPart.triangleCountC * 3, rpart->trianglesC);
 
-      if(rpart->materials && rpart->flag.hasComplexMaterial)
+      if(rpart->triangleMaterials && rpart->flag.hasComplexMaterial)
       {
         glNamedBufferSubData(m_scene.materialIndexBuffer, sizeof(LdrMaterialID) * drawPart.materialIDOffset,
-                             sizeof(LdrMaterialID) * drawPart.triangleCount, rpart->materials);
+                             sizeof(LdrMaterialID) * drawPart.triangleCount, rpart->triangleMaterials);
       }
       if(rpart->materialsC && rpart->flag.hasComplexMaterial)
       {
@@ -1036,7 +1036,7 @@ void Sample::drawDebug()
   glUniform1ui(UNI_MATERIALIDOFFSET, ~0);
 
   LdrModelHDL model = m_scene.model;
-  for(uint32_t i = 0; i < model->num_instances; i++)
+  for(uint32_t i = 0; i < model->numInstances; i++)
   {
     const LdrInstance*   instance = &model->instances[i];
     const LdrPart*       part     = ldrGetPart(m_loader, instance->part);
@@ -1086,19 +1086,19 @@ void Sample::drawDebug()
 
       if(m_tweak.triangles)
       {
-        if(part->materials && part->flag.hasComplexMaterial)
+        if(part->triangleMaterials && part->flag.hasComplexMaterial)
           glUniform1ui(UNI_MATERIALIDOFFSET, drawPart.materialIDOffset);
 
-        glDrawElementsBaseVertex(GL_TRIANGLES, part->num_triangles * 3, GL_UNSIGNED_INT,
+        glDrawElementsBaseVertex(GL_TRIANGLES, part->numTriangles * 3, GL_UNSIGNED_INT,
                                  (const void*)(sizeof(uint32_t) * drawPart.triangleOffset), drawPart.vertexOffset);
-        if(part->materials && part->flag.hasComplexMaterial)
+        if(part->triangleMaterials && part->flag.hasComplexMaterial)
           glUniform1ui(UNI_MATERIALIDOFFSET, ~0);
       }
       glUniform1f(UNI_COLORMUL, 0.2f);
       if(m_tweak.edges)
       {
         glLineWidth(1 * widthScale);
-        glDrawElementsBaseVertex(GL_LINES, part->num_lines * 2, GL_UNSIGNED_INT,
+        glDrawElementsBaseVertex(GL_LINES, part->numLines * 2, GL_UNSIGNED_INT,
                                  (const void*)(sizeof(uint32_t) * drawPart.edgesOffset), drawPart.vertexOffset);
       }
 
@@ -1107,7 +1107,7 @@ void Sample::drawDebug()
         glLineWidth(1 * widthScale);
         glLineStipple(4, 0xAAAA);
         glEnable(GL_LINE_STIPPLE);
-        glDrawElementsBaseVertex(GL_LINES, part->num_optional_lines * 2, GL_UNSIGNED_INT,
+        glDrawElementsBaseVertex(GL_LINES, part->numOptionalLines * 2, GL_UNSIGNED_INT,
                                  (const void*)(sizeof(uint32_t) * drawPart.optionalOffset), drawPart.vertexOffset);
         glDisable(GL_LINE_STIPPLE);
       }
@@ -1119,7 +1119,7 @@ void Sample::drawDebug()
         glLineStipple(2, 0xAAAA);
         glEnable(GL_LINE_STIPPLE);
         glPolygonMode(GL_FRONT_AND_BACK, GL_LINE);
-        glDrawElementsBaseVertex(GL_TRIANGLES, part->num_triangles * 3, GL_UNSIGNED_INT,
+        glDrawElementsBaseVertex(GL_TRIANGLES, part->numTriangles * 3, GL_UNSIGNED_INT,
                                  (const void*)(sizeof(uint32_t) * drawPart.triangleOffset), drawPart.vertexOffset);
         glDisable(GL_LINE_STIPPLE);
         glPolygonMode(GL_FRONT_AND_BACK, GL_FILL);
@@ -1129,8 +1129,8 @@ void Sample::drawDebug()
     {
 
       uint32_t triangles = m_tweak.chamfered && rpart->flag.canChamfer ? drawPart.triangleOffsetC : drawPart.triangleOffset;
-      uint32_t num_triangles = m_tweak.chamfered && rpart->flag.canChamfer ? rpart->num_trianglesC : rpart->num_triangles;
-      const LdrMaterialID* materials = m_tweak.chamfered && rpart->flag.canChamfer ? rpart->materialsC : rpart->materials;
+      uint32_t numTriangles = m_tweak.chamfered && rpart->flag.canChamfer ? rpart->numTrianglesC : rpart->numTriangles;
+      const LdrMaterialID* triangleMaterials = m_tweak.chamfered && rpart->flag.canChamfer ? rpart->materialsC : rpart->triangleMaterials;
       uint32_t material_offset = m_tweak.chamfered && rpart->flag.canChamfer ? drawPart.materialIDOffsetC : drawPart.materialIDOffset;
 
       glUniform1i(UNI_LIGHTING, 1);
@@ -1138,13 +1138,13 @@ void Sample::drawDebug()
 
       if(m_tweak.triangles)
       {
-        if(materials && rpart->flag.hasComplexMaterial)
+        if(triangleMaterials && rpart->flag.hasComplexMaterial)
           glUniform1ui(UNI_MATERIALIDOFFSET, material_offset);
 
-        glDrawElementsBaseVertex(GL_TRIANGLES, num_triangles * 3, GL_UNSIGNED_INT,
+        glDrawElementsBaseVertex(GL_TRIANGLES, numTriangles * 3, GL_UNSIGNED_INT,
                                  (const void*)(sizeof(uint32_t) * triangles), drawPart.vertexOffset);
 
-        if(materials && rpart->flag.hasComplexMaterial)
+        if(triangleMaterials && rpart->flag.hasComplexMaterial)
           glUniform1ui(UNI_MATERIALIDOFFSET, ~0);
       }
 
@@ -1153,7 +1153,7 @@ void Sample::drawDebug()
       if(m_tweak.edges)
       {
         glLineWidth(1 * widthScale);
-        glDrawElementsBaseVertex(GL_LINES, rpart->num_lines * 2, GL_UNSIGNED_INT,
+        glDrawElementsBaseVertex(GL_LINES, rpart->numLines * 2, GL_UNSIGNED_INT,
                                  (const void*)(sizeof(uint32_t) * drawPart.edgesOffset), drawPart.vertexOffset);
       }
 
@@ -1163,7 +1163,7 @@ void Sample::drawDebug()
         glUniform1f(UNI_COLORMUL, wireColor);
         glEnable(GL_LINE_STIPPLE);
         glPolygonMode(GL_FRONT_AND_BACK, GL_LINE);
-        glDrawElementsBaseVertex(GL_TRIANGLES, num_triangles * 3, GL_UNSIGNED_INT,
+        glDrawElementsBaseVertex(GL_TRIANGLES, numTriangles * 3, GL_UNSIGNED_INT,
                                  (const void*)(sizeof(uint32_t) * triangles), drawPart.vertexOffset);
         glDisable(GL_LINE_STIPPLE);
         glPolygonMode(GL_FRONT_AND_BACK, GL_FILL);
