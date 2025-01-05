@@ -1,5 +1,5 @@
 /*
-* Copyright (c) 2019-2024, Christoph Kubisch. All rights reserved.
+* Copyright (c) 2019-2025, Christoph Kubisch. All rights reserved.
 *
 * Licensed under the Apache License, Version 2.0 (the "License");
 * you may not use this file except in compliance with the License.
@@ -200,7 +200,7 @@ public:
     m_loaderCreateInfo.partFixTjunctions   = LDR_TRUE;
     m_loaderCreateInfo.partFixOverlap      = LDR_TRUE;
     m_loaderCreateInfo.partHiResPrimitives = LDR_FALSE;
-    m_loaderCreateInfo.renderpartChamfer   = 0.35f;
+    m_loaderCreateInfo.renderpartChamfer   = 0.2f;
 
     m_parameterList.addFilename(".ldr", &m_modelFilename);
     m_parameterList.addFilename(".mpd", &m_modelFilename);
@@ -627,17 +627,10 @@ void Sample::processUI(double time)
     }
 
     if(ImGui::CollapsingHeader("loader settings", ImGuiTreeNodeFlags_DefaultOpen)) {
-      /*
-        m_loaderCreateInfo.partFixMode         = LDR_PART_FIX_NONE;
-        m_loaderCreateInfo.renderpartBuildMode = LDR_RENDERPART_BUILD_ONLOAD;
-        m_loaderCreateInfo.partFixTjunctions   = LDR_TRUE;
-        m_loaderCreateInfo.partHiResPrimitives = LDR_FALSE;
-        m_loaderCreateInfo.renderpartChamfer   = 0.35f;
-      */
       ImGui::Checkbox("build renderparts", (bool*)&m_loaderCreateInfo.renderpartBuildMode);
       ImGui::Checkbox("fix parts", (bool*)&m_loaderCreateInfo.partFixMode);
-      ImGui::Checkbox("fix t junctions", (bool*)&m_loaderCreateInfo.partFixTjunctions);
       ImGui::Checkbox("fix coplanar overlap", (bool*)&m_loaderCreateInfo.partFixOverlap);
+      ImGui::Checkbox("fix t junctions", (bool*)&m_loaderCreateInfo.partFixTjunctions);
       ImGui::Checkbox("hi-res primitives", (bool*)&m_loaderCreateInfo.partHiResPrimitives);
       ImGui::InputFloat("render chamfer", &m_loaderCreateInfo.renderpartChamfer, 0, 0, "%.3f", ImGuiInputTextFlags_EnterReturnsTrue);
     }
@@ -777,7 +770,7 @@ void Sample::rebuildSceneBuffers()
       drawPart.edgesCount     = part->numLines;
       drawPart.optionalCount  = part->numOptionalLines;
       drawPart.triangleCountC = 0;
-      if(part->triangleMaterials && part->flag.hasComplexMaterial) {
+      if(part->triangleMaterials && part->flags.hasComplexMaterial) {
         materialIndexCount = part->numTriangles;
       }
     }
@@ -789,9 +782,9 @@ void Sample::rebuildSceneBuffers()
         drawPart.edgesCount     = rpart->numLines;
         drawPart.optionalCount  = 0;
         drawPart.triangleCountC = rpart->numTrianglesC;
-        if(rpart->triangleMaterials && rpart->flag.hasComplexMaterial)
+        if(rpart->triangleMaterials && rpart->flags.hasComplexMaterial)
           materialIndexCount = rpart->numTriangles;
-        if(rpart->materialsC && rpart->flag.hasComplexMaterial)
+        if(rpart->materialsC && rpart->flags.hasComplexMaterial)
           materialIndexCountC = rpart->numTrianglesC;
       }
       else {
@@ -865,7 +858,7 @@ void Sample::rebuildSceneBuffers()
       glNamedBufferSubData(m_scene.indexBuffer, sizeof(uint32_t) * drawPart.optionalOffset,
                            sizeof(uint32_t) * drawPart.optionalCount * 2, part->optional_lines);
 
-      if(part->triangleMaterials && part->flag.hasComplexMaterial) {
+      if(part->triangleMaterials && part->flags.hasComplexMaterial) {
         glNamedBufferSubData(m_scene.materialIndexBuffer, sizeof(LdrMaterialID) * drawPart.materialIDOffset,
                              sizeof(LdrMaterialID) * drawPart.triangleCount, part->triangleMaterials);
       }
@@ -886,11 +879,11 @@ void Sample::rebuildSceneBuffers()
       glNamedBufferSubData(m_scene.indexBuffer, sizeof(uint32_t) * drawPart.triangleOffsetC,
                            sizeof(uint32_t) * drawPart.triangleCountC * 3, rpart->trianglesC);
 
-      if(rpart->triangleMaterials && rpart->flag.hasComplexMaterial) {
+      if(rpart->triangleMaterials && rpart->flags.hasComplexMaterial) {
         glNamedBufferSubData(m_scene.materialIndexBuffer, sizeof(LdrMaterialID) * drawPart.materialIDOffset,
                              sizeof(LdrMaterialID) * drawPart.triangleCount, rpart->triangleMaterials);
       }
-      if(rpart->materialsC && rpart->flag.hasComplexMaterial) {
+      if(rpart->materialsC && rpart->flags.hasComplexMaterial) {
         glNamedBufferSubData(m_scene.materialIndexBuffer, sizeof(LdrMaterialID) * drawPart.materialIDOffsetC,
                              sizeof(LdrMaterialID) * drawPart.triangleCountC, rpart->materialsC);
       }
@@ -990,14 +983,14 @@ void Sample::drawDebug()
 
     glUniform1ui(UNI_MATERIALID, instance->material);
 
-    if(cullFace != !(bool(part->flag.hasNoBackFaceCulling) || !m_tweak.cull)) {
+    if(cullFace != !(bool(part->flags.hasNoBackFaceCulling) || !m_tweak.cull)) {
       if(cullFace) {
         glDisable(GL_CULL_FACE);
       }
       else {
         glEnable(GL_CULL_FACE);
       }
-      cullFace = !(bool(part->flag.hasNoBackFaceCulling) || !m_tweak.cull);
+      cullFace = !(bool(part->flags.hasNoBackFaceCulling) || !m_tweak.cull);
     }
 
     if(ccw != det > 0) {
@@ -1010,12 +1003,12 @@ void Sample::drawDebug()
       glUniform1f(UNI_COLORMUL, 1.0f);
 
       if(m_tweak.triangles) {
-        if(part->triangleMaterials && part->flag.hasComplexMaterial)
+        if(part->triangleMaterials && part->flags.hasComplexMaterial)
           glUniform1ui(UNI_MATERIALIDOFFSET, drawPart.materialIDOffset);
 
         glDrawElementsBaseVertex(GL_TRIANGLES, part->numTriangles * 3, GL_UNSIGNED_INT,
                                  (const void*)(sizeof(uint32_t) * drawPart.triangleOffset), drawPart.vertexOffset);
-        if(part->triangleMaterials && part->flag.hasComplexMaterial)
+        if(part->triangleMaterials && part->flags.hasComplexMaterial)
           glUniform1ui(UNI_MATERIALIDOFFSET, ~0);
       }
       glUniform1f(UNI_COLORMUL, 0.2f);
@@ -1048,22 +1041,23 @@ void Sample::drawDebug()
     }
     else if(rpart) {
 
-      uint32_t triangles = m_tweak.chamfered && rpart->flag.canChamfer ? drawPart.triangleOffsetC : drawPart.triangleOffset;
-      uint32_t numTriangles = m_tweak.chamfered && rpart->flag.canChamfer ? rpart->numTrianglesC : rpart->numTriangles;
-      const LdrMaterialID* triangleMaterials = m_tweak.chamfered && rpart->flag.canChamfer ? rpart->materialsC : rpart->triangleMaterials;
-      uint32_t material_offset = m_tweak.chamfered && rpart->flag.canChamfer ? drawPart.materialIDOffsetC : drawPart.materialIDOffset;
+      uint32_t triangles = m_tweak.chamfered && rpart->flags.canChamfer ? drawPart.triangleOffsetC : drawPart.triangleOffset;
+      uint32_t numTriangles = m_tweak.chamfered && rpart->flags.canChamfer ? rpart->numTrianglesC : rpart->numTriangles;
+      const LdrMaterialID* triangleMaterials =
+          m_tweak.chamfered && rpart->flags.canChamfer ? rpart->materialsC : rpart->triangleMaterials;
+      uint32_t material_offset = m_tweak.chamfered && rpart->flags.canChamfer ? drawPart.materialIDOffsetC : drawPart.materialIDOffset;
 
       glUniform1i(UNI_LIGHTING, 1);
       glUniform1f(UNI_COLORMUL, 1.0f);
 
       if(m_tweak.triangles) {
-        if(triangleMaterials && rpart->flag.hasComplexMaterial)
+        if(triangleMaterials && rpart->flags.hasComplexMaterial)
           glUniform1ui(UNI_MATERIALIDOFFSET, material_offset);
 
         glDrawElementsBaseVertex(GL_TRIANGLES, numTriangles * 3, GL_UNSIGNED_INT,
                                  (const void*)(sizeof(uint32_t) * triangles), drawPart.vertexOffset);
 
-        if(triangleMaterials && rpart->flag.hasComplexMaterial)
+        if(triangleMaterials && rpart->flags.hasComplexMaterial)
           glUniform1ui(UNI_MATERIALIDOFFSET, ~0);
       }
 
